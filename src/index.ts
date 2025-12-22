@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes, CommandInteraction, SlashCommandBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import * as dotenv from 'dotenv';
 
 // Load environment variables
