@@ -9,9 +9,8 @@ export const commands = [
 ];
 
 // Command handlers
-export async function handlePingCommand(interaction: ChatInputCommandInteraction): Promise<string> {
+export async function handlePingCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.reply('Pong! 🏓');
-  return 'Pong! 🏓';
 }
 
 export async function handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {

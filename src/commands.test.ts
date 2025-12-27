@@ -13,7 +13,8 @@ describe('Ping Command', () => {
 
   describe('handlePingCommand', () => {
     it('should reply with "Pong! 🏓"', async () => {
-      // Mock the interaction
+      // Mock the interaction with minimal required properties
+      // Type assertion is necessary as we're creating a partial mock for testing
       const mockInteraction = {
         reply: jest.fn().mockResolvedValue(undefined),
         user: {
@@ -23,15 +24,15 @@ describe('Ping Command', () => {
       } as unknown as ChatInputCommandInteraction;
 
       // Call the handler
-      const result = await handlePingCommand(mockInteraction);
+      await handlePingCommand(mockInteraction);
 
       // Verify the response
       expect(mockInteraction.reply).toHaveBeenCalledWith('Pong! 🏓');
-      expect(result).toBe('Pong! 🏓');
     });
 
     it('should throw an error if reply fails', async () => {
       // Mock an interaction that fails to reply
+      // Type assertion is necessary as we're creating a partial mock for testing
       const mockInteraction = {
         reply: jest.fn().mockRejectedValue(new Error('Reply failed')),
         user: {
