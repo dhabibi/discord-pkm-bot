@@ -1,5 +1,6 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import * as dotenv from 'dotenv';
+import { commands, handleCommand } from './commands';
 
 // Load environment variables
 dotenv.config();
@@ -17,14 +18,6 @@ if (!TOKEN || !CLIENT_ID) {
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
-
-// Define the /ping command
-const commands = [
-  new SlashCommandBuilder()
-    .setName('ping')
-    .setDescription('Replies with Pong!')
-    .toJSON()
-];
 
 // Register slash commands
 async function registerCommands() {
@@ -54,19 +47,7 @@ client.once('ready', () => {
 // Event: Interaction created (slash command)
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
-
-  const { commandName } = interaction;
-  
-  console.log(`[INFO] Command received: /${commandName} by ${interaction.user.tag}`);
-
-  if (commandName === 'ping') {
-    try {
-      await interaction.reply('Pong! 🏓');
-      console.log(`[INFO] Successfully responded to /${commandName}`);
-    } catch (error) {
-      console.error(`[ERROR] Failed to respond to /${commandName}:`, error);
-    }
-  }
+  await handleCommand(interaction);
 });
 
 // Error handling
