@@ -12,9 +12,16 @@ export function extractUrls(text: string): string[] {
     // Remove trailing punctuation that appears at sentence boundaries
     // Keep ) if it's balanced with ( in the URL
     let cleaned = url;
+    const maxIterations = 10; // Safety limit for trailing punctuation removal
+    let iterations = 0;
+    
+    // Count parentheses once for efficiency
+    let openCount = (cleaned.match(/\(/g) || []).length;
+    let closeCount = (cleaned.match(/\)/g) || []).length;
     
     // Remove trailing punctuation like ., !, ?, ;, :, but be smart about )
-    while (cleaned.length > 0) {
+    while (cleaned.length > 0 && iterations < maxIterations) {
+      iterations++;
       const lastChar = cleaned[cleaned.length - 1];
       
       // Always remove these trailing characters
@@ -25,12 +32,10 @@ export function extractUrls(text: string): string[] {
       
       // For ), only remove if unbalanced (more ) than ()
       if (lastChar === ')') {
-        const openCount = (cleaned.match(/\(/g) || []).length;
-        const closeCount = (cleaned.match(/\)/g) || []).length;
-        
         // If there are more closing than opening parens, remove the trailing one
         if (closeCount > openCount) {
           cleaned = cleaned.slice(0, -1);
+          closeCount--; // Decrement the count after removal
           continue;
         }
       }
