@@ -50,5 +50,19 @@ describe('URL Extractor', () => {
       
       expect(urls).toEqual(['https://example.com', 'http://test.com']);
     });
+
+    it('should exclude trailing punctuation from URLs', () => {
+      const text = 'Check out https://example.com. And also http://test.com!';
+      const urls = extractUrls(text);
+      
+      expect(urls).toEqual(['https://example.com', 'http://test.com']);
+    });
+
+    it('should handle URLs followed by various punctuation', () => {
+      const text = 'Links: https://example.com, http://test.com; https://another.com. Final: http://last.com!';
+      const urls = extractUrls(text);
+      
+      expect(urls).toEqual(['https://example.com', 'http://test.com', 'https://another.com', 'http://last.com']);
+    });
   });
 });

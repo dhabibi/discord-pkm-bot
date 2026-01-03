@@ -27,12 +27,18 @@ export interface Link {
 }
 
 export async function saveLink(url: string): Promise<{ data: Link | null; error: any }> {
-  const supabase = getSupabaseClient();
-  const { data, error } = await supabase
-    .from('links')
-    .insert({ url })
-    .select()
-    .single();
-  
-  return { data, error };
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('links')
+      .insert({ url })
+      .select()
+      .single();
+    
+    return { data, error };
+  } catch (error) {
+    // Handle errors from .single() or other operations
+    console.error('[ERROR] Exception in saveLink:', error);
+    return { data: null, error };
+  }
 }

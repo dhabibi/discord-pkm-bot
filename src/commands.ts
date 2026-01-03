@@ -79,9 +79,23 @@ export async function handleCommand(interaction: ChatInputCommandInteraction): P
       await handleToggleAutosaveCommand(interaction);
     } else if (commandName === 'check-autosave') {
       await handleCheckAutosaveCommand(interaction);
+    } else {
+      await interaction.reply('❌ Unknown command.');
+      console.log(`[WARN] Unknown command received: /${commandName}`);
+      return;
     }
     console.log(`[INFO] Successfully responded to /${commandName}`);
   } catch (error) {
     console.error(`[ERROR] Failed to respond to /${commandName}:`, error);
+    // Try to send an error message to the user
+    try {
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp('❌ An error occurred while processing your command.');
+      } else {
+        await interaction.reply('❌ An error occurred while processing your command.');
+      }
+    } catch (replyError) {
+      console.error(`[ERROR] Failed to send error message to user:`, replyError);
+    }
   }
 }
