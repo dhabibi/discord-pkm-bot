@@ -1,48 +1,187 @@
-import { handlePingCommand, commands } from './commands';
+import { handlePingCommand, handleSaveCommand, handleToggleAutosaveCommand, handleCheckAutosaveCommand, commands } from './commands';
 import { ChatInputCommandInteraction } from 'discord.js';
+import { saveLink } from './supabase';
+import { toggleAutosave, isAutosaveEnabled, clearAutosaveSettings } from './autosave';
 
-describe('Ping Command', () => {
-  describe('Command Definition', () => {
+// Mock dependencies
+jest.mock('./supabase');
+jest.mock('./autosave');
+
+describe('Commands', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  describe('Command Definitions', () => {
     it('should have a ping command defined', () => {
       const pingCommand = commands.find(cmd => cmd.name === 'ping');
       expect(pingCommand).toBeDefined();
       expect(pingCommand?.name).toBe('ping');
       expect(pingCommand?.description).toBe('Replies with Pong!');
     });
+
+    it('should have a save command defined', () => {
+      const saveCommand = commands.find(cmd => cmd.name === 'save');
+      expect(saveCommand).toBeDefined();
+      expect(saveCommand?.name).toBe('save');
+      expect(saveCommand?.description).toBe('Save a URL to the database');
+    });
+
+    it('should have a toggle-autosave command defined', () => {
+      const toggleCommand = commands.find(cmd => cmd.name === 'toggle-autosave');
+      expect(toggleCommand).toBeDefined();
+      expect(toggleCommand?.name).toBe('toggle-autosave');
+      expect(toggleCommand?.description).toBe('Toggle autosave for links in this channel');
+    });
+
+    it('should have a check-autosave command defined', () => {
+      const checkCommand = commands.find(cmd => cmd.name === 'check-autosave');
+      expect(checkCommand).toBeDefined();
+      expect(checkCommand?.name).toBe('check-autosave');
+      expect(checkCommand?.description).toBe('Check if autosave is enabled for this channel');
+    });
   });
 
   describe('handlePingCommand', () => {
     it('should reply with "Pong! 🏓"', async () => {
-      // Mock the interaction with minimal required properties
-      // Type assertion is necessary as we're creating a partial mock for testing
       const mockInteraction = {
         reply: jest.fn().mockResolvedValue(undefined),
-        user: {
-          tag: 'TestUser#1234'
-        },
+        user: { tag: 'TestUser#1234' },
         commandName: 'ping'
       } as unknown as ChatInputCommandInteraction;
 
-      // Call the handler
       await handlePingCommand(mockInteraction);
 
-      // Verify the response
       expect(mockInteraction.reply).toHaveBeenCalledWith('Pong! 🏓');
     });
 
     it('should throw an error if reply fails', async () => {
-      // Mock an interaction that fails to reply
-      // Type assertion is necessary as we're creating a partial mock for testing
       const mockInteraction = {
         reply: jest.fn().mockRejectedValue(new Error('Reply failed')),
-        user: {
-          tag: 'TestUser#1234'
-        },
+        user: { tag: 'TestUser#1234' },
         commandName: 'ping'
       } as unknown as ChatInputCommandInteraction;
 
-      // Verify the error is propagated
       await expect(handlePingCommand(mockInteraction)).rejects.toThrow('Reply failed');
+    });
+  });
+
+  describe('handleSaveCommand', () => {
+    it('should save a URL successfully', async () => {
+      const mockUrl = 'https://example.com';
+      const mockLink = { url: mockUrl, created_at: '2024-01-01' };
+      (saveLink as jest.Mock).mockResolvedValue({ data: mockLink, error: null });
+
+      const mockInteraction = {
+        options: {
+          getString: jest.fn().mockReturnValue(mockUrl)
+        },
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'save'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleSaveCommand(mockInteraction);
+
+      expect(mockInteraction.options.getString).toHaveBeenCalledWith('url', true);
+      expect(saveLink).toHaveBeenCalledWith(mockUrl);
+      expect(mockInteraction.reply).toHaveBeenCalledWith(`✅ Link saved: ${mockUrl}`);
+    });
+
+    it('should handle database errors', async () => {
+      const mockUrl = 'https://example.com';
+      const mockError = { message: 'Database error' };
+      (saveLink as jest.Mock).mockResolvedValue({ data: null, error: mockError });
+
+      const mockInteraction = {
+        options: {
+          getString: jest.fn().mockReturnValue(mockUrl)
+        },
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'save'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleSaveCommand(mockInteraction);
+
+      expect(saveLink).toHaveBeenCalledWith(mockUrl);
+      expect(mockInteraction.reply).toHaveBeenCalledWith('❌ Failed to save link. Please try again.');
+    });
+  });
+
+  describe('handleToggleAutosaveCommand', () => {
+    beforeEach(() => {
+      (clearAutosaveSettings as jest.Mock).mockImplementation(() => {});
+    });
+
+    it('should enable autosave when disabled', async () => {
+      const channelId = '123456789';
+      (toggleAutosave as jest.Mock).mockReturnValue(true);
+
+      const mockInteraction = {
+        channelId,
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'toggle-autosave'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleToggleAutosaveCommand(mockInteraction);
+
+      expect(toggleAutosave).toHaveBeenCalledWith(channelId);
+      expect(mockInteraction.reply).toHaveBeenCalledWith('✅ Autosave enabled for this channel.');
+    });
+
+    it('should disable autosave when enabled', async () => {
+      const channelId = '123456789';
+      (toggleAutosave as jest.Mock).mockReturnValue(false);
+
+      const mockInteraction = {
+        channelId,
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'toggle-autosave'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleToggleAutosaveCommand(mockInteraction);
+
+      expect(toggleAutosave).toHaveBeenCalledWith(channelId);
+      expect(mockInteraction.reply).toHaveBeenCalledWith('⛔ Autosave disabled for this channel.');
+    });
+  });
+
+  describe('handleCheckAutosaveCommand', () => {
+    it('should report autosave as enabled', async () => {
+      const channelId = '123456789';
+      (isAutosaveEnabled as jest.Mock).mockReturnValue(true);
+
+      const mockInteraction = {
+        channelId,
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'check-autosave'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleCheckAutosaveCommand(mockInteraction);
+
+      expect(isAutosaveEnabled).toHaveBeenCalledWith(channelId);
+      expect(mockInteraction.reply).toHaveBeenCalledWith('✅ Autosave is **enabled** for this channel.');
+    });
+
+    it('should report autosave as disabled', async () => {
+      const channelId = '123456789';
+      (isAutosaveEnabled as jest.Mock).mockReturnValue(false);
+
+      const mockInteraction = {
+        channelId,
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'check-autosave'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleCheckAutosaveCommand(mockInteraction);
+
+      expect(isAutosaveEnabled).toHaveBeenCalledWith(channelId);
+      expect(mockInteraction.reply).toHaveBeenCalledWith('⛔ Autosave is **disabled** for this channel.');
     });
   });
 });

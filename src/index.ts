@@ -1,6 +1,7 @@
 import { Client, GatewayIntentBits, REST, Routes } from 'discord.js';
 import * as dotenv from 'dotenv';
 import { commands, handleCommand } from './commands';
+import { handleMessage } from './messageHandler';
 
 // Load environment variables
 dotenv.config();
@@ -16,7 +17,11 @@ if (!TOKEN || !CLIENT_ID) {
 
 // Create Discord client
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
 // Register slash commands
@@ -48,6 +53,11 @@ client.once('ready', () => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   await handleCommand(interaction);
+});
+
+// Event: Message created (for autosave)
+client.on('messageCreate', async (message) => {
+  await handleMessage(message);
 });
 
 // Error handling
