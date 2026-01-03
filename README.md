@@ -14,7 +14,7 @@ A Discord bot built with TypeScript and discord.js that helps you manage and sav
 
 ## Prerequisites
 
-- Node.js 18.x or higher
+- Node.js 20.x or higher (required by Supabase dependencies)
 - A Discord Bot Token (see setup instructions below)
 - A Supabase account and project (for link storage)
 

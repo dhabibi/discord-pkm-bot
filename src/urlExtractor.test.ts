@@ -64,5 +64,36 @@ describe('URL Extractor', () => {
       
       expect(urls).toEqual(['https://example.com', 'http://test.com', 'https://another.com', 'http://last.com']);
     });
+
+    it('should capture URLs with balanced parentheses like Wikipedia links', () => {
+      const text = 'Check out https://en.wikipedia.org/wiki/Apple_(disambiguation) for more info.';
+      const urls = extractUrls(text);
+      
+      expect(urls).toEqual(['https://en.wikipedia.org/wiki/Apple_(disambiguation)']);
+    });
+
+    it('should handle multiple Wikipedia-style URLs', () => {
+      const text = 'See https://en.wikipedia.org/wiki/Python_(programming_language) and https://en.wikipedia.org/wiki/Ruby_(programming_language)';
+      const urls = extractUrls(text);
+      
+      expect(urls).toEqual([
+        'https://en.wikipedia.org/wiki/Python_(programming_language)',
+        'https://en.wikipedia.org/wiki/Ruby_(programming_language)'
+      ]);
+    });
+
+    it('should remove unbalanced trailing parentheses', () => {
+      const text = 'Link in parentheses (https://example.com)';
+      const urls = extractUrls(text);
+      
+      expect(urls).toEqual(['https://example.com']);
+    });
+
+    it('should handle URLs with nested parentheses', () => {
+      const text = 'See https://example.com/path/(nested_(content))';
+      const urls = extractUrls(text);
+      
+      expect(urls).toEqual(['https://example.com/path/(nested_(content))']);
+    });
   });
 });
