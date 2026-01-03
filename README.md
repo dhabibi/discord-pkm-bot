@@ -11,7 +11,7 @@ A minimal Discord bot built with TypeScript and discord.js that responds to slas
 
 ## Prerequisites
 
-- Node.js 18.x or higher
+- Node.js 20.x or higher
 - A Discord Bot Token (see setup instructions below)
 
 ## Setup
