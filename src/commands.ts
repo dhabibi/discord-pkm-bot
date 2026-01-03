@@ -34,12 +34,15 @@ export async function handlePingCommand(interaction: ChatInputCommandInteraction
 export async function handleSaveCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const url = interaction.options.getString('url', true);
   
+  // Defer reply to prevent Discord interaction timeout during database operations
+  await interaction.deferReply();
+  
   const { data, error } = await saveLink(url);
   
   if (error || !data) {
-    await interaction.reply('❌ Failed to save link. Please try again.');
+    await interaction.editReply('❌ Failed to save link. Please try again.');
   } else {
-    await interaction.reply(`✅ Link saved: ${url}`);
+    await interaction.editReply(`✅ Link saved: ${url}`);
   }
 }
 

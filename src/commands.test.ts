@@ -76,7 +76,8 @@ describe('Commands', () => {
         options: {
           getString: jest.fn().mockReturnValue(mockUrl)
         },
-        reply: jest.fn().mockResolvedValue(undefined),
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
         user: { tag: 'TestUser#1234' },
         commandName: 'save'
       } as unknown as ChatInputCommandInteraction;
@@ -84,8 +85,9 @@ describe('Commands', () => {
       await handleSaveCommand(mockInteraction);
 
       expect(mockInteraction.options.getString).toHaveBeenCalledWith('url', true);
+      expect(mockInteraction.deferReply).toHaveBeenCalled();
       expect(saveLink).toHaveBeenCalledWith(mockUrl);
-      expect(mockInteraction.reply).toHaveBeenCalledWith(`✅ Link saved: ${mockUrl}`);
+      expect(mockInteraction.editReply).toHaveBeenCalledWith(`✅ Link saved: ${mockUrl}`);
     });
 
     it('should handle database errors', async () => {
@@ -97,15 +99,17 @@ describe('Commands', () => {
         options: {
           getString: jest.fn().mockReturnValue(mockUrl)
         },
-        reply: jest.fn().mockResolvedValue(undefined),
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
         user: { tag: 'TestUser#1234' },
         commandName: 'save'
       } as unknown as ChatInputCommandInteraction;
 
       await handleSaveCommand(mockInteraction);
 
+      expect(mockInteraction.deferReply).toHaveBeenCalled();
       expect(saveLink).toHaveBeenCalledWith(mockUrl);
-      expect(mockInteraction.reply).toHaveBeenCalledWith('❌ Failed to save link. Please try again.');
+      expect(mockInteraction.editReply).toHaveBeenCalledWith('❌ Failed to save link. Please try again.');
     });
   });
 
