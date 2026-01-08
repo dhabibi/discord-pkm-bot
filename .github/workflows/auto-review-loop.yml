@@ -1,0 +1,319 @@
+name: Automated Copilot-Codex Review Loop
+
+# Trigger on PR events when opened or updated
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Use concurrency to prevent multiple workflows running on the same PR
+concurrency:
+  group: review-loop-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+# Required permissions for the workflow
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  auto-review:
+    name: Automated Review Loop
+    runs-on: ubuntu-latest
+
+    # Only run if PR author is a bot (Copilot or similar)
+    if: github.event.pull_request.user.type == 'Bot' || contains(github.event.pull_request.user.login, 'copilot') || contains(github.event.pull_request.user.login, 'claude')
+
+    # Set timeout for entire workflow (2 hours)
+    timeout-minutes: 120
+
+    env:
+      # Configuration variables
+      MAX_ITERATIONS: 10
+      POLL_INTERVAL: 60  # seconds
+      MAX_POLL_TIME: 600  # 10 minutes in seconds
+      RATE_LIMIT_DELAY: 60  # 1 minute between comments
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      REPO: ${{ github.repository }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up review loop state
+        id: setup
+        run: |
+          echo "Starting automated review loop for PR #$PR_NUMBER"
+          echo "Max iterations: $MAX_ITERATIONS"
+          echo "Poll interval: $POLL_INTERVAL seconds"
+          echo "Max poll time: $MAX_POLL_TIME seconds"
+
+          # Initialize state variables
+          echo "iteration=0" >> $GITHUB_OUTPUT
+          echo "approved=false" >> $GITHUB_OUTPUT
+          echo "last_comment_time=0" >> $GITHUB_OUTPUT
+
+      - name: Run review loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+
+          # Initialize variables
+          ITERATION=0
+          APPROVED=false
+          LAST_COMMENT_TIME=0
+
+          echo "========================================="
+          echo "Starting Copilot-Codex Review Loop"
+          echo "========================================="
+
+          # Function to enforce rate limiting
+          enforce_rate_limit() {
+            local current_time=$(date +%s)
+            local time_since_last=$((current_time - LAST_COMMENT_TIME))
+
+            if [ $time_since_last -lt $RATE_LIMIT_DELAY ]; then
+              local sleep_time=$((RATE_LIMIT_DELAY - time_since_last))
+              echo "Rate limiting: sleeping for $sleep_time seconds..."
+              sleep $sleep_time
+            fi
+
+            LAST_COMMENT_TIME=$(date +%s)
+          }
+
+          # Function to post a comment
+          post_comment() {
+            local message="$1"
+            echo "Posting comment: $message"
+            enforce_rate_limit
+            gh pr comment $PR_NUMBER --body "$message"
+            echo "Comment posted successfully"
+          }
+
+          # Function to get the latest comment
+          get_latest_comment() {
+            gh pr view $PR_NUMBER --json comments --jq '.comments | sort_by(.createdAt) | .[-1]'
+          }
+
+          # Function to get comments after a specific timestamp
+          get_comments_after() {
+            local timestamp="$1"
+            gh pr view $PR_NUMBER --json comments --jq ".comments | map(select(.createdAt > \"$timestamp\")) | sort_by(.createdAt)"
+          }
+
+          # Function to check if Codex has responded
+          wait_for_codex_response() {
+            local start_time=$(date +%s)
+            local last_check_time=$(date -Iseconds)
+
+            echo "Waiting for Codex response (max $MAX_POLL_TIME seconds)..."
+
+            while true; do
+              local current_time=$(date +%s)
+              local elapsed=$((current_time - start_time))
+
+              if [ $elapsed -gt $MAX_POLL_TIME ]; then
+                echo "Timeout: Codex did not respond within $MAX_POLL_TIME seconds"
+                return 1
+              fi
+
+              # Check for new comments
+              local new_comments=$(get_comments_after "$last_check_time")
+              local comment_count=$(echo "$new_comments" | jq '. | length')
+
+              if [ "$comment_count" -gt 0 ]; then
+                # Check if any comment is from Codex
+                local codex_comment=$(echo "$new_comments" | jq -r '.[] | select(.author.login | contains("codex") or contains("Codex")) | .body' | head -n 1)
+
+                if [ -n "$codex_comment" ]; then
+                  echo "Codex responded!"
+                  echo "$codex_comment"
+                  return 0
+                fi
+              fi
+
+              echo "No response yet. Elapsed: ${elapsed}s / ${MAX_POLL_TIME}s"
+              sleep $POLL_INTERVAL
+              last_check_time=$(date -Iseconds)
+            done
+          }
+
+          # Function to parse Codex response
+          parse_codex_response() {
+            local response="$1"
+            local response_lower=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+
+            # Count approval indicators
+            local approval_count=0
+            approval_count=$((approval_count + $(echo "$response_lower" | grep -c "lgtm" || echo 0)))
+            approval_count=$((approval_count + $(echo "$response_lower" | grep -c "looks good" || echo 0)))
+            approval_count=$((approval_count + $(echo "$response_lower" | grep -c "approve" || echo 0)))
+            approval_count=$((approval_count + $(echo "$response_lower" | grep -c "no issues" || echo 0)))
+            approval_count=$((approval_count + $(echo "$response_lower" | grep -c "ready to merge" || echo 0)))
+
+            # Count issue indicators
+            local issue_count=0
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "issue" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "problem" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "bug" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "fix" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "concern" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "should" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "must" || echo 0)))
+            issue_count=$((issue_count + $(echo "$response_lower" | grep -c "error" || echo 0)))
+
+            echo "Approval indicators: $approval_count"
+            echo "Issue indicators: $issue_count"
+
+            # Determine if approved
+            if [ $approval_count -gt $issue_count ] && [ $approval_count -gt 0 ]; then
+              echo "APPROVED"
+              return 0
+            else
+              echo "ISSUES_FOUND"
+              return 1
+            fi
+          }
+
+          # Function to get latest Codex comment
+          get_latest_codex_comment() {
+            gh pr view $PR_NUMBER --json comments --jq -r '.comments | map(select(.author.login | contains("codex") or contains("Codex"))) | sort_by(.createdAt) | .[-1].body // ""'
+          }
+
+          # Main review loop
+          while [ $ITERATION -lt $MAX_ITERATIONS ]; do
+            ITERATION=$((ITERATION + 1))
+
+            echo ""
+            echo "========================================="
+            echo "Iteration $ITERATION/$MAX_ITERATIONS"
+            echo "========================================="
+
+            # Post comment asking Codex to review
+            post_comment "🔄 **Iteration $ITERATION/$MAX_ITERATIONS**: @codex review
+
+            Please review this pull request and provide feedback. Let me know if:
+            - ✅ The code looks good and is ready to merge (use terms like 'LGTM', 'looks good', 'approve', 'no issues', or 'ready to merge')
+            - ⚠️ There are issues that need to be addressed (describe the problems)
+
+            Thank you!"
+
+            # Wait for Codex to respond
+            if ! wait_for_codex_response; then
+              echo "⏱️ Codex did not respond in time. Stopping review loop."
+              post_comment "⏱️ **Review loop stopped**: Codex did not respond within the timeout period (${MAX_POLL_TIME}s). Please review manually."
+              exit 0
+            fi
+
+            # Get Codex's latest response
+            CODEX_RESPONSE=$(get_latest_codex_comment)
+
+            if [ -z "$CODEX_RESPONSE" ]; then
+              echo "No Codex response found. Continuing..."
+              continue
+            fi
+
+            echo ""
+            echo "Codex response:"
+            echo "---"
+            echo "$CODEX_RESPONSE"
+            echo "---"
+            echo ""
+
+            # Parse Codex response
+            if parse_codex_response "$CODEX_RESPONSE"; then
+              echo "✅ Codex approved the changes!"
+              APPROVED=true
+
+              # Post confirmation comment
+              post_comment "✅ **Review approved** (Iteration $ITERATION/$MAX_ITERATIONS)
+
+              Codex has approved the changes. Proceeding to auto-merge..."
+
+              break
+            else
+              echo "⚠️ Codex found issues that need to be addressed"
+
+              # Check if we've reached max iterations
+              if [ $ITERATION -ge $MAX_ITERATIONS ]; then
+                echo "❌ Maximum iterations reached without approval"
+                post_comment "❌ **Review loop completed** (Max iterations: $MAX_ITERATIONS)
+
+                The review loop has completed without approval. Please address the feedback and try again."
+                exit 0
+              fi
+
+              # Ask Copilot to address the feedback
+              post_comment "🔧 **Iteration $ITERATION/$MAX_ITERATIONS**: @copilot address that feedback
+
+              Please review Codex's comments above and address the identified issues. Push your changes when ready."
+
+              # Wait for Copilot to push new commits
+              echo "Waiting for Copilot to push new commits..."
+              local wait_start=$(date +%s)
+              local max_wait=600  # 10 minutes
+
+              while true; do
+                local wait_elapsed=$(( $(date +%s) - wait_start ))
+
+                if [ $wait_elapsed -gt $max_wait ]; then
+                  echo "⏱️ Copilot did not push new commits in time."
+                  post_comment "⏱️ **Review loop paused**: Waiting for Copilot to push new commits. The workflow will automatically resume when new commits are pushed."
+                  exit 0
+                fi
+
+                # In a real scenario, the workflow would be re-triggered by new commits
+                # For this iteration, we'll just continue to the next loop
+                echo "Note: In practice, this workflow will be re-triggered when Copilot pushes new commits."
+                break
+              done
+            fi
+          done
+
+          # Handle approval and auto-merge
+          if [ "$APPROVED" = "true" ]; then
+            echo ""
+            echo "========================================="
+            echo "Auto-merging PR #$PR_NUMBER"
+            echo "========================================="
+
+            # Enable auto-merge with squash strategy
+            gh pr merge $PR_NUMBER --auto --squash --delete-branch
+
+            echo "✅ Auto-merge enabled. PR will be merged when all checks pass."
+
+            post_comment "🎉 **Auto-merge enabled**
+
+            This PR has been approved by Codex after $ITERATION iteration(s) and will be automatically merged when all status checks pass.
+
+            Review summary:
+            - ✅ Codex approval received
+            - 🔄 Total iterations: $ITERATION
+            - 🚀 Auto-merge: Enabled (squash strategy)
+            - 🗑️ Branch will be deleted after merge"
+          else
+            echo "❌ Review loop completed without approval"
+            post_comment "❌ **Review loop completed**
+
+            The review loop has completed without approval after $ITERATION iteration(s). Please review the feedback and address any remaining issues."
+          fi
+
+          echo ""
+          echo "========================================="
+          echo "Review loop completed"
+          echo "========================================="
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Review Loop Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Number**: #$PR_NUMBER" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository**: $REPO" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Max Iterations**: $MAX_ITERATIONS" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check the PR comments for detailed review history." >> $GITHUB_STEP_SUMMARY
