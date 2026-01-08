@@ -1,13 +1,17 @@
 name: Automated Copilot-Codex Review Loop
 
-# Trigger on PR events when opened or updated
+# Trigger when:
+# 1. A comment is posted (to catch user's "@codex review")
+# 2. New commits are pushed (when Copilot addresses feedback)
 on:
+  issue_comment:
+    types: [created]
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [synchronize]
 
 # Use concurrency to prevent multiple workflows running on the same PR
 concurrency:
-  group: review-loop-${{ github.event.pull_request.number }}
+  group: review-loop-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 # Required permissions for the workflow
@@ -21,8 +25,12 @@ jobs:
     name: Automated Review Loop
     runs-on: ubuntu-latest
 
-    # Only run if PR author is a bot (Copilot or similar)
-    if: github.event.pull_request.user.type == 'Bot' || contains(github.event.pull_request.user.login, 'copilot') || contains(github.event.pull_request.user.login, 'claude')
+    # Only run if:
+    # 1. Triggered by comment on a PR containing "@codex review", OR
+    # 2. Triggered by new commits (synchronize) on a PR
+    if: |
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.comment.body, '@codex review')) ||
+      (github.event_name == 'pull_request' && github.event.action == 'synchronize')
 
     # Set timeout for entire workflow (2 hours)
     timeout-minutes: 120
@@ -33,7 +41,7 @@ jobs:
       POLL_INTERVAL: 60  # seconds
       MAX_POLL_TIME: 600  # 10 minutes in seconds
       RATE_LIMIT_DELAY: 60  # 1 minute between comments
-      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PR_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
       REPO: ${{ github.repository }}
 
     steps:
@@ -58,6 +66,7 @@ jobs:
       - name: Run review loop
         env:
           GH_TOKEN: ${{ github.token }}
+          TRIGGER_EVENT: ${{ github.event_name }}
         run: |
           set -e
 
@@ -68,6 +77,7 @@ jobs:
 
           echo "========================================="
           echo "Starting Copilot-Codex Review Loop"
+          echo "Triggered by: $TRIGGER_EVENT"
           echo "========================================="
 
           # Function to enforce rate limiting
@@ -183,16 +193,45 @@ jobs:
             gh pr view $PR_NUMBER --json comments --jq -r '.comments | map(select(.author.login | contains("codex") or contains("Codex"))) | sort_by(.createdAt) | .[-1].body // ""'
           }
 
-          # Main review loop
-          while [ $ITERATION -lt $MAX_ITERATIONS ]; do
-            ITERATION=$((ITERATION + 1))
+          # Function to count iteration number from previous comments
+          get_current_iteration() {
+            local count=$(gh pr view $PR_NUMBER --json comments --jq '[.comments[].body | select(contains("Iteration") and contains("@codex review"))] | length')
+            echo $((count + 1))
+          }
 
-            echo ""
-            echo "========================================="
-            echo "Iteration $ITERATION/$MAX_ITERATIONS"
-            echo "========================================="
+          # Function to check if we should continue the review loop
+          should_continue_loop() {
+            # Check if there's a recent "@copilot address that feedback" comment
+            local recent_copilot_request=$(gh pr view $PR_NUMBER --json comments --jq -r '.comments | map(select(.body | contains("@copilot address that feedback"))) | sort_by(.createdAt) | .[-1].body // ""')
 
-            # Post comment asking Codex to review
+            if [ -n "$recent_copilot_request" ]; then
+              return 0  # Yes, continue
+            else
+              return 1  # No, don't continue
+            fi
+          }
+
+          # Determine current iteration based on comment history
+          ITERATION=$(get_current_iteration)
+          echo "Current iteration: $ITERATION"
+
+          # Handle different trigger scenarios
+          if [ "$TRIGGER_EVENT" = "issue_comment" ]; then
+            echo "Triggered by user posting @codex review comment"
+            echo "Waiting for Codex to respond..."
+          elif [ "$TRIGGER_EVENT" = "pull_request" ]; then
+            echo "Triggered by new commits (synchronize event)"
+
+            # Check if we should continue the loop
+            if ! should_continue_loop; then
+              echo "No active review loop found. Exiting."
+              echo "Note: To start a review loop, post a comment with '@codex review'"
+              exit 0
+            fi
+
+            echo "Continuing review loop after Copilot pushed new commits"
+
+            # Post comment asking Codex to review the new changes
             post_comment "🔄 **Iteration $ITERATION/$MAX_ITERATIONS**: @codex review
 
             Please review this pull request and provide feedback. Let me know if:
@@ -200,81 +239,56 @@ jobs:
             - ⚠️ There are issues that need to be addressed (describe the problems)
 
             Thank you!"
+          fi
 
-            # Wait for Codex to respond
-            if ! wait_for_codex_response; then
-              echo "⏱️ Codex did not respond in time. Stopping review loop."
-              post_comment "⏱️ **Review loop stopped**: Codex did not respond within the timeout period (${MAX_POLL_TIME}s). Please review manually."
-              exit 0
-            fi
+          # Check if max iterations exceeded
+          if [ $ITERATION -gt $MAX_ITERATIONS ]; then
+            echo "❌ Maximum iterations reached without approval"
+            post_comment "❌ **Review loop completed** (Max iterations: $MAX_ITERATIONS)
 
-            # Get Codex's latest response
-            CODEX_RESPONSE=$(get_latest_codex_comment)
+            The review loop has completed after reaching maximum iterations without approval. Please review the feedback manually and address any remaining issues."
+            exit 0
+          fi
 
-            if [ -z "$CODEX_RESPONSE" ]; then
-              echo "No Codex response found. Continuing..."
-              continue
-            fi
+          # Main review loop - single iteration per workflow run
+          echo ""
+          echo "========================================="
+          echo "Iteration $ITERATION/$MAX_ITERATIONS"
+          echo "========================================="
 
-            echo ""
-            echo "Codex response:"
-            echo "---"
-            echo "$CODEX_RESPONSE"
-            echo "---"
-            echo ""
+          # Wait for Codex to respond
+          if ! wait_for_codex_response; then
+            echo "⏱️ Codex did not respond in time. Stopping review loop."
+            post_comment "⏱️ **Review loop stopped**: Codex did not respond within the timeout period (${MAX_POLL_TIME}s). Please review manually or post another '@codex review' comment to retry."
+            exit 0
+          fi
 
-            # Parse Codex response
-            if parse_codex_response "$CODEX_RESPONSE"; then
-              echo "✅ Codex approved the changes!"
-              APPROVED=true
+          # Get Codex's latest response
+          CODEX_RESPONSE=$(get_latest_codex_comment)
 
-              # Post confirmation comment
-              post_comment "✅ **Review approved** (Iteration $ITERATION/$MAX_ITERATIONS)
+          if [ -z "$CODEX_RESPONSE" ]; then
+            echo "No Codex response found. Exiting."
+            post_comment "⚠️ **No response detected**: Could not find a Codex response. Please ensure Codex has commented, or post another '@codex review' comment to retry."
+            exit 0
+          fi
 
-              Codex has approved the changes. Proceeding to auto-merge..."
+          echo ""
+          echo "Codex response:"
+          echo "---"
+          echo "$CODEX_RESPONSE"
+          echo "---"
+          echo ""
 
-              break
-            else
-              echo "⚠️ Codex found issues that need to be addressed"
+          # Parse Codex response
+          if parse_codex_response "$CODEX_RESPONSE"; then
+            echo "✅ Codex approved the changes!"
 
-              # Check if we've reached max iterations
-              if [ $ITERATION -ge $MAX_ITERATIONS ]; then
-                echo "❌ Maximum iterations reached without approval"
-                post_comment "❌ **Review loop completed** (Max iterations: $MAX_ITERATIONS)
+            # Post confirmation comment
+            post_comment "✅ **Review approved** (Iteration $ITERATION/$MAX_ITERATIONS)
 
-                The review loop has completed without approval. Please address the feedback and try again."
-                exit 0
-              fi
+            Codex has approved the changes. Proceeding to auto-merge..."
 
-              # Ask Copilot to address the feedback
-              post_comment "🔧 **Iteration $ITERATION/$MAX_ITERATIONS**: @copilot address that feedback
-
-              Please review Codex's comments above and address the identified issues. Push your changes when ready."
-
-              # Wait for Copilot to push new commits
-              echo "Waiting for Copilot to push new commits..."
-              local wait_start=$(date +%s)
-              local max_wait=600  # 10 minutes
-
-              while true; do
-                local wait_elapsed=$(( $(date +%s) - wait_start ))
-
-                if [ $wait_elapsed -gt $max_wait ]; then
-                  echo "⏱️ Copilot did not push new commits in time."
-                  post_comment "⏱️ **Review loop paused**: Waiting for Copilot to push new commits. The workflow will automatically resume when new commits are pushed."
-                  exit 0
-                fi
-
-                # In a real scenario, the workflow would be re-triggered by new commits
-                # For this iteration, we'll just continue to the next loop
-                echo "Note: In practice, this workflow will be re-triggered when Copilot pushes new commits."
-                break
-              done
-            fi
-          done
-
-          # Handle approval and auto-merge
-          if [ "$APPROVED" = "true" ]; then
+            # Handle approval and auto-merge
             echo ""
             echo "========================================="
             echo "Auto-merging PR #$PR_NUMBER"
@@ -295,10 +309,16 @@ jobs:
             - 🚀 Auto-merge: Enabled (squash strategy)
             - 🗑️ Branch will be deleted after merge"
           else
-            echo "❌ Review loop completed without approval"
-            post_comment "❌ **Review loop completed**
+            echo "⚠️ Codex found issues that need to be addressed"
 
-            The review loop has completed without approval after $ITERATION iteration(s). Please review the feedback and address any remaining issues."
+            # Ask Copilot to address the feedback
+            post_comment "🔧 **Iteration $ITERATION/$MAX_ITERATIONS**: @copilot address that feedback
+
+            Please review Codex's comments above and address the identified issues. Push your changes when ready, and the workflow will automatically continue the review loop."
+
+            echo "Posted request for Copilot to address feedback."
+            echo "Workflow will be re-triggered when Copilot pushes new commits."
+            exit 0
           fi
 
           echo ""
