@@ -93,12 +93,14 @@ The bot can integrate with Poke using the Message Control Protocol (MCP) for bid
 - Signature verification ensures security
 
 **Rate Limiting:**
-- The bot implements rate limiting (50 requests per 60 seconds) to prevent API overload
+- Outbound (Discord → Poke): 50 requests per 60 seconds to prevent API overload
+- Inbound (Poke → Discord): 100 requests per IP per minute on webhook endpoint
 - Rate-limited requests are logged and return appropriate errors
 
 **Security:**
 - Webhook signatures are verified using HMAC-SHA256
 - API requests use Bearer token authentication
+- Webhook endpoint has IP-based rate limiting
 - All errors are logged for debugging
 
 ### 4. Configure the Bot

@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import rateLimit from 'express-rate-limit';
 import { Client } from 'discord.js';
 import { MCPWebhookPayload, MCPMessage } from './types';
 import { verifyWebhookSignature } from './auth';
@@ -24,6 +25,17 @@ export class WebhookServer {
         req.rawBody = buf.toString('utf8');
       }
     }));
+
+    // Rate limiting for webhook endpoint
+    const webhookLimiter = rateLimit({
+      windowMs: 60 * 1000, // 1 minute
+      max: 100, // Limit each IP to 100 requests per minute
+      message: { error: 'Too many requests, please try again later' },
+      standardHeaders: true,
+      legacyHeaders: false,
+    });
+    
+    this.app.use('/webhook', webhookLimiter);
 
     // Logging middleware
     this.app.use((req: Request, res: Response, next: NextFunction) => {
