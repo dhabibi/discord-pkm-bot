@@ -1,0 +1,272 @@
+name: Auto Review Loop
+
+on:
+  pull_request:
+    types: [review_requested]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Prevent multiple workflows running on the same PR
+concurrency:
+  group: auto-review-loop-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review-loop:
+    runs-on: ubuntu-latest
+    # Only run when Copilot requests review
+    if: github.event.requested_reviewer.login == 'copilot' || github.event.requested_reviewer.login == 'github-copilot[bot]'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitHub CLI
+        run: |
+          echo "GitHub CLI version:"
+          gh --version
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Start Review Loop
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+
+          echo "=========================================="
+          echo "Starting Auto Review Loop"
+          echo "PR: #${PR_NUMBER}"
+          echo "Repository: ${REPO}"
+          echo "=========================================="
+
+          # Initialize tracking variables
+          LAST_PROCESSED_COMMENT_ID=""
+          LOOP_COUNT=0
+          MAX_POLL_TIME=3600  # 1 hour in seconds
+          POLL_INTERVAL=30     # 30 seconds
+
+          # Function to check if PR is already merged
+          check_if_merged() {
+            echo "Checking if PR is already merged..."
+            PR_STATE=$(gh pr view ${PR_NUMBER} --repo ${REPO} --json state --jq '.state')
+            if [ "$PR_STATE" == "MERGED" ]; then
+              echo "PR is already merged. Exiting gracefully."
+              exit 0
+            fi
+          }
+
+          # Function to post a comment
+          post_comment() {
+            local comment_body="$1"
+            echo "Posting comment: ${comment_body}"
+            gh pr comment ${PR_NUMBER} --repo ${REPO} --body "${comment_body}"
+            echo "Comment posted successfully"
+          }
+
+          # Function to get latest comments
+          get_latest_comments() {
+            gh pr view ${PR_NUMBER} --repo ${REPO} --json comments --jq '.comments[] | {id: .id, author: .author.login, body: .body, createdAt: .createdAt}'
+          }
+
+          # Function to get latest commit SHA
+          get_latest_commit_sha() {
+            gh pr view ${PR_NUMBER} --repo ${REPO} --json commits --jq '.commits[-1].oid'
+          }
+
+          # Function to parse Codex response
+          parse_codex_response() {
+            local response="$1"
+            local response_lower=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+
+            # Approval indicators
+            local approval_patterns=("lgtm" "looks good" "approve" "no issues" "ready to merge" "ship it")
+            local has_approval=false
+
+            for pattern in "${approval_patterns[@]}"; do
+              if echo "$response_lower" | grep -q "$pattern"; then
+                has_approval=true
+                echo "Found approval indicator: $pattern"
+                break
+              fi
+            done
+
+            # Issue indicators
+            local issue_patterns=("issue" "problem" "bug" "fix" "concern" "should" "must" "error" "needs")
+            local has_issues=false
+
+            for pattern in "${issue_patterns[@]}"; do
+              if echo "$response_lower" | grep -q "$pattern"; then
+                has_issues=true
+                echo "Found issue indicator: $pattern"
+                break
+              fi
+            done
+
+            # Return approval status: approved if has approval words and NO issue words
+            if [ "$has_approval" = true ] && [ "$has_issues" = false ]; then
+              echo "APPROVED"
+            else
+              echo "HAS_ISSUES"
+            fi
+          }
+
+          # Function to wait for Codex response
+          wait_for_codex_response() {
+            echo "=========================================="
+            echo "Waiting for Codex response..."
+            echo "=========================================="
+
+            local elapsed_time=0
+            local found_response=false
+            local codex_response=""
+            local codex_comment_id=""
+
+            while [ $elapsed_time -lt $MAX_POLL_TIME ]; do
+              echo "Polling for Codex response... (elapsed: ${elapsed_time}s)"
+
+              # Get all comments and find latest Codex comment
+              local comments=$(get_latest_comments)
+
+              while IFS= read -r comment_line; do
+                if [ -z "$comment_line" ]; then
+                  continue
+                fi
+
+                local comment_id=$(echo "$comment_line" | jq -r '.id // empty')
+                local comment_author=$(echo "$comment_line" | jq -r '.author // empty')
+                local comment_body=$(echo "$comment_line" | jq -r '.body // empty')
+
+                # Check if this is a Codex comment and we haven't processed it yet
+                if [[ "$comment_author" == *"codex"* ]] && [ "$comment_id" != "$LAST_PROCESSED_COMMENT_ID" ]; then
+                  # Check if comment is newer than last processed
+                  if [ -z "$LAST_PROCESSED_COMMENT_ID" ] || [ "$comment_id" -gt "$LAST_PROCESSED_COMMENT_ID" ]; then
+                    echo "Found new Codex comment (ID: ${comment_id})"
+                    codex_response="$comment_body"
+                    codex_comment_id="$comment_id"
+                    found_response=true
+                    break
+                  fi
+                fi
+              done < <(echo "$comments" | jq -c '.')
+
+              if [ "$found_response" = true ]; then
+                break
+              fi
+
+              sleep $POLL_INTERVAL
+              elapsed_time=$((elapsed_time + POLL_INTERVAL))
+            done
+
+            if [ "$found_response" = false ]; then
+              echo "ERROR: Codex did not respond within 1 hour"
+              exit 1
+            fi
+
+            echo "Codex responded with: ${codex_response}"
+            LAST_PROCESSED_COMMENT_ID="$codex_comment_id"
+            echo "$codex_response"
+          }
+
+          # Function to wait for Copilot to push new commits
+          wait_for_copilot_commits() {
+            local initial_commit_sha="$1"
+            echo "=========================================="
+            echo "Waiting for Copilot to push new commits..."
+            echo "Initial commit SHA: ${initial_commit_sha}"
+            echo "=========================================="
+
+            local elapsed_time=0
+            local found_new_commit=false
+
+            while [ $elapsed_time -lt $MAX_POLL_TIME ]; do
+              echo "Checking for new commits... (elapsed: ${elapsed_time}s)"
+
+              local current_commit_sha=$(get_latest_commit_sha)
+
+              if [ "$current_commit_sha" != "$initial_commit_sha" ]; then
+                echo "New commit detected: ${current_commit_sha}"
+                found_new_commit=true
+                break
+              fi
+
+              sleep $POLL_INTERVAL
+              elapsed_time=$((elapsed_time + POLL_INTERVAL))
+            done
+
+            if [ "$found_new_commit" = false ]; then
+              echo "ERROR: Copilot did not push new commits within 1 hour"
+              exit 1
+            fi
+          }
+
+          # Main review loop
+          echo "=========================================="
+          echo "Entering main review loop"
+          echo "=========================================="
+
+          while true; do
+            LOOP_COUNT=$((LOOP_COUNT + 1))
+            echo ""
+            echo "=========================================="
+            echo "Loop iteration: ${LOOP_COUNT}"
+            echo "=========================================="
+
+            # Check if PR is already merged
+            check_if_merged
+
+            # Step 1: Request review from Codex
+            echo "Step 1: Requesting review from @codex"
+            post_comment "@codex review"
+
+            # Step 2: Wait for Codex response
+            echo "Step 2: Waiting for Codex response"
+            codex_response=$(wait_for_codex_response)
+
+            # Step 3: Parse Codex response
+            echo "Step 3: Parsing Codex response"
+            response_status=$(parse_codex_response "$codex_response")
+            echo "Response status: ${response_status}"
+
+            if [ "$response_status" == "APPROVED" ]; then
+              echo "=========================================="
+              echo "Codex approved the PR! Proceeding to merge."
+              echo "=========================================="
+
+              # Merge PR with auto-squash
+              echo "Merging PR #${PR_NUMBER} with squash..."
+              gh pr merge ${PR_NUMBER} --repo ${REPO} --auto --squash
+
+              echo "=========================================="
+              echo "PR merge initiated successfully"
+              echo "Review loop completed"
+              echo "Total iterations: ${LOOP_COUNT}"
+              echo "=========================================="
+              exit 0
+
+            else
+              echo "=========================================="
+              echo "Codex found issues. Requesting Copilot to address feedback."
+              echo "=========================================="
+
+              # Get current commit SHA before requesting changes
+              initial_commit_sha=$(get_latest_commit_sha)
+              echo "Current commit SHA: ${initial_commit_sha}"
+
+              # Step 4: Ask Copilot to address feedback
+              echo "Step 4: Posting comment to @copilot"
+              post_comment "@copilot address that feedback"
+
+              # Step 5: Wait for Copilot to push new commits
+              echo "Step 5: Waiting for Copilot to push new commits"
+              wait_for_copilot_commits "$initial_commit_sha"
+
+              echo "Copilot has pushed new commits. Starting next review iteration..."
+            fi
+          done
+
+        env:
+          GH_TOKEN: ${{ github.token }}
