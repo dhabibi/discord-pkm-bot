@@ -1,0 +1,241 @@
+name: Copilot/Codex Auto Review Loop
+
+on:
+  pull_request:
+    types: [review_requested]
+
+# Prevent multiple workflows running on the same PR
+concurrency:
+  group: auto-review-loop-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-review-loop:
+    # Only run when Copilot requests review
+    if: |
+      github.event.requested_reviewer.login == 'copilot' ||
+      github.event.requested_reviewer.login == 'github-copilot[bot]' ||
+      contains(github.event.requested_reviewer.login, 'copilot')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitHub CLI
+        run: |
+          echo "GitHub CLI version:"
+          gh --version
+
+      - name: Start Auto Review Loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -e
+
+          echo "============================================"
+          echo "Starting Auto Review Loop for PR #${PR_NUMBER}"
+          echo "============================================"
+
+          ITERATION=0
+          LAST_PROCESSED_COMMENT_ID=""
+          COPILOT_USERNAME="copilot"
+          CODEX_USERNAME="codex"
+
+          # Function to check if PR is already merged
+          check_pr_merged() {
+            local merged_state=$(gh pr view ${PR_NUMBER} --json merged --jq '.merged')
+            if [ "$merged_state" == "true" ]; then
+              echo "✓ PR #${PR_NUMBER} is already merged. Exiting gracefully."
+              exit 0
+            fi
+          }
+
+          # Function to post a comment
+          post_comment() {
+            local message="$1"
+            echo "📝 Posting comment: $message"
+            gh pr comment ${PR_NUMBER} --body "$message"
+          }
+
+          # Function to get latest comments
+          get_latest_comments() {
+            gh pr view ${PR_NUMBER} --json comments --jq '.comments[] | {id: .id, author: .author.login, body: .body, createdAt: .createdAt}'
+          }
+
+          # Function to check if response contains approval
+          check_approval() {
+            local response="$1"
+            local lower_response=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+
+            # Approval indicators
+            local approval_found=false
+            if echo "$lower_response" | grep -qE "(lgtm|looks good|approve|no issues|ready to merge|ship it)"; then
+              approval_found=true
+            fi
+
+            # Issue indicators (should NOT be present for approval)
+            local issue_found=false
+            if echo "$lower_response" | grep -qE "(issue|problem|bug|fix|concern|should|must|error|needs)"; then
+              issue_found=true
+            fi
+
+            # Approved only if we found approval words AND no issue words
+            if [ "$approval_found" == "true" ] && [ "$issue_found" == "false" ]; then
+              echo "approved"
+            else
+              echo "issues"
+            fi
+          }
+
+          # Function to wait for comment from specific user
+          wait_for_comment() {
+            local username="$1"
+            local timeout_seconds="$2"
+            local start_time=$(date +%s)
+
+            echo "⏳ Waiting for response from @${username} (timeout: ${timeout_seconds}s)..."
+
+            while true; do
+              local current_time=$(date +%s)
+              local elapsed=$((current_time - start_time))
+
+              if [ $elapsed -ge $timeout_seconds ]; then
+                echo "❌ Timeout: No response from @${username} after ${timeout_seconds} seconds"
+                exit 1
+              fi
+
+              # Get all comments
+              local comments=$(get_latest_comments)
+
+              # Find the latest comment from the target user after our last processed comment
+              local new_comment=$(echo "$comments" | jq -r --arg user "$username" --arg last_id "$LAST_PROCESSED_COMMENT_ID" 'select(.author == $user) | select(.id > ($last_id // "0")) | .body' | head -1)
+
+              if [ -n "$new_comment" ] && [ "$new_comment" != "null" ]; then
+                # Update last processed comment ID
+                LAST_PROCESSED_COMMENT_ID=$(echo "$comments" | jq -r --arg user "$username" 'select(.author == $user) | .id' | head -1)
+                echo "$new_comment"
+                return 0
+              fi
+
+              echo "  ... still waiting (${elapsed}s elapsed) ..."
+              sleep 30
+            done
+          }
+
+          # Function to wait for new commits
+          wait_for_new_commits() {
+            local current_commit_count=$(gh pr view ${PR_NUMBER} --json commits --jq '.commits | length')
+            local timeout_seconds=3600  # 1 hour
+            local start_time=$(date +%s)
+
+            echo "⏳ Waiting for Copilot to push new commits (current count: ${current_commit_count})..."
+
+            while true; do
+              local current_time=$(date +%s)
+              local elapsed=$((current_time - start_time))
+
+              if [ $elapsed -ge $timeout_seconds ]; then
+                echo "❌ Timeout: No new commits from Copilot after ${timeout_seconds} seconds"
+                exit 1
+              fi
+
+              local new_commit_count=$(gh pr view ${PR_NUMBER} --json commits --jq '.commits | length')
+
+              if [ $new_commit_count -gt $current_commit_count ]; then
+                echo "✓ New commits detected! Count increased from ${current_commit_count} to ${new_commit_count}"
+                return 0
+              fi
+
+              echo "  ... still waiting for commits (${elapsed}s elapsed) ..."
+              sleep 30
+            done
+          }
+
+          # Main review loop - runs indefinitely until Codex approves
+          while true; do
+            ITERATION=$((ITERATION + 1))
+            echo ""
+            echo "============================================"
+            echo "🔄 Review Loop Iteration #${ITERATION}"
+            echo "============================================"
+
+            # Check if PR is already merged
+            check_pr_merged
+
+            # Step 1: Request review from Codex
+            echo ""
+            echo "Step 1: Requesting review from @${CODEX_USERNAME}"
+            post_comment "@${CODEX_USERNAME} review"
+
+            # Step 2: Wait for Codex's response (1 hour timeout)
+            echo ""
+            echo "Step 2: Waiting for Codex's response"
+            codex_response=$(wait_for_comment "$CODEX_USERNAME" 3600)
+
+            echo ""
+            echo "📨 Codex responded:"
+            echo "---"
+            echo "$codex_response"
+            echo "---"
+
+            # Step 3: Parse Codex's response
+            echo ""
+            echo "Step 3: Parsing Codex's response"
+            review_status=$(check_approval "$codex_response")
+
+            echo "Review status: $review_status"
+
+            if [ "$review_status" == "approved" ]; then
+              # Step 4a: Codex approved - merge the PR
+              echo ""
+              echo "✅ Codex approved the PR!"
+              echo "Step 4: Merging PR #${PR_NUMBER}"
+
+              # Enable auto-merge with squash
+              gh pr merge ${PR_NUMBER} --auto --squash
+
+              echo ""
+              echo "============================================"
+              echo "🎉 SUCCESS: PR #${PR_NUMBER} set to auto-merge!"
+              echo "============================================"
+
+              # Exit the loop - we're done!
+              exit 0
+            else
+              # Step 4b: Codex found issues - ask Copilot to address them
+              echo ""
+              echo "⚠️  Codex found issues that need to be addressed"
+              echo "Step 4: Requesting Copilot to address feedback"
+
+              post_comment "@${COPILOT_USERNAME} address that feedback"
+
+              # Step 5: Wait for Copilot to push new commits (1 hour timeout)
+              echo ""
+              echo "Step 5: Waiting for Copilot to push updates"
+              wait_for_new_commits
+
+              echo ""
+              echo "✓ Copilot has pushed updates. Starting next review iteration..."
+
+              # Loop continues to next iteration
+            fi
+          done
+
+      - name: Loop Completed
+        if: success()
+        run: |
+          echo "✅ Auto review loop completed successfully!"
+
+      - name: Loop Failed
+        if: failure()
+        run: |
+          echo "❌ Auto review loop failed. Check logs for details."
+          exit 1
