@@ -142,8 +142,8 @@ jobs:
 
                 # Check if this is a Codex comment and we haven't processed it yet
                 if [[ "$comment_author" == *"codex"* ]] && [ "$comment_id" != "$LAST_PROCESSED_COMMENT_ID" ]; then
-                  # Check if comment is newer than last processed
-                  if [ -z "$LAST_PROCESSED_COMMENT_ID" ] || [ "$comment_id" -gt "$LAST_PROCESSED_COMMENT_ID" ]; then
+                  # Check if comment is newer than last processed (use timestamp or just check if different)
+                  if [ -z "$LAST_PROCESSED_COMMENT_ID" ] || [ "$comment_id" != "$LAST_PROCESSED_COMMENT_ID" ]; then
                     echo "Found new Codex comment (ID: ${comment_id})"
                     codex_response="$comment_body"
                     codex_comment_id="$comment_id"
@@ -238,14 +238,24 @@ jobs:
 
               # Merge PR with auto-squash
               echo "Merging PR #${PR_NUMBER} with squash..."
-              gh pr merge ${PR_NUMBER} --repo ${REPO} --auto --squash
-
-              echo "=========================================="
-              echo "PR merge initiated successfully"
-              echo "Review loop completed"
-              echo "Total iterations: ${LOOP_COUNT}"
-              echo "=========================================="
-              exit 0
+              if gh pr merge ${PR_NUMBER} --repo ${REPO} --auto --squash; then
+                echo "=========================================="
+                echo "PR merge initiated successfully"
+                echo "Review loop completed"
+                echo "Total iterations: ${LOOP_COUNT}"
+                echo "=========================================="
+                exit 0
+              else
+                echo "WARNING: Failed to initiate auto-merge. PR may not meet merge requirements."
+                echo "Attempting direct merge..."
+                if gh pr merge ${PR_NUMBER} --repo ${REPO} --squash; then
+                  echo "Direct merge successful"
+                  exit 0
+                else
+                  echo "ERROR: Unable to merge PR. Check branch protection rules and merge requirements."
+                  exit 1
+                fi
+              fi
 
             else
               echo "=========================================="
