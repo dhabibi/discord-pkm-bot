@@ -86,9 +86,8 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
 
   // Check if user has ReadMessageHistory permission
   const member = interaction.member;
-  if (member && 'permissions' in member && member.permissions) {
-    const permissions = member.permissions;
-    if (typeof permissions !== 'string' && !permissions.has(PermissionFlagsBits.ReadMessageHistory)) {
+  if (member && 'permissions' in member && member.permissions && typeof member.permissions !== 'string') {
+    if (!member.permissions.has(PermissionFlagsBits.ReadMessageHistory)) {
       await interaction.reply('❌ You need the "Read Message History" permission to use this command.');
       return;
     }
