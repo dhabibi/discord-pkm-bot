@@ -1,4 +1,4 @@
-import { getSupabaseClient, saveLink, resetSupabaseClient } from './supabase';
+import { getSupabaseClient, saveLink, saveDiscordLinks, resetSupabaseClient, DiscordLink } from './supabase';
 import { createClient } from '@supabase/supabase-js';
 
 // Mock the Supabase client
@@ -100,6 +100,79 @@ describe('Supabase Client', () => {
       (createClient as jest.Mock).mockReturnValue(mockClient);
 
       const result = await saveLink('https://example.com');
+
+      expect(result.data).toBeNull();
+      expect(result.error).toEqual(mockError);
+    });
+  });
+
+  describe('saveDiscordLinks', () => {
+    it('should save multiple discord links successfully', async () => {
+      process.env.SUPABASE_URL = 'https://example.supabase.co';
+      process.env.SUPABASE_SECRET_KEY = 'test-key';
+
+      const mockLinks: DiscordLink[] = [
+        {
+          message_id: '123',
+          channel_id: '456',
+          channel_name: 'general',
+          author_id: '789',
+          author_name: 'TestUser1234',
+          timestamp: '2024-01-01T00:00:00Z',
+          message_content: 'Check out this link',
+          url: 'https://example.com',
+          domain: 'example.com'
+        }
+      ];
+
+      const mockSelect = jest.fn().mockResolvedValue({ data: mockLinks, error: null });
+      const mockUpsert = jest.fn().mockReturnValue({
+        select: mockSelect
+      });
+      const mockFrom = jest.fn().mockReturnValue({
+        upsert: mockUpsert
+      });
+      const mockClient = { from: mockFrom };
+      (createClient as jest.Mock).mockReturnValue(mockClient);
+
+      const result = await saveDiscordLinks(mockLinks);
+
+      expect(mockFrom).toHaveBeenCalledWith('discord_links');
+      expect(mockUpsert).toHaveBeenCalledWith(mockLinks, { onConflict: 'message_id,url' });
+      expect(result.data).toEqual(mockLinks);
+      expect(result.error).toBeNull();
+    });
+
+    it('should return error if batch save fails', async () => {
+      process.env.SUPABASE_URL = 'https://example.supabase.co';
+      process.env.SUPABASE_SECRET_KEY = 'test-key';
+
+      const mockLinks: DiscordLink[] = [
+        {
+          message_id: '123',
+          channel_id: '456',
+          channel_name: 'general',
+          author_id: '789',
+          author_name: 'TestUser1234',
+          timestamp: '2024-01-01T00:00:00Z',
+          message_content: 'Check out this link',
+          url: 'https://example.com',
+          domain: 'example.com'
+        }
+      ];
+
+      const mockError = { message: 'Batch insert error' };
+      const mockSelect = jest.fn().mockResolvedValue({ data: null, error: mockError });
+      const mockUpsert = jest.fn().mockReturnValue({
+        select: mockSelect
+      });
+      const mockFrom = jest.fn().mockReturnValue({
+        upsert: mockUpsert
+      });
+      const mockClient = { from: mockFrom };
+      (createClient as jest.Mock).mockReturnValue(mockClient);
+
+      const result = await saveDiscordLinks(mockLinks);
 
       expect(result.data).toBeNull();
       expect(result.error).toEqual(mockError);

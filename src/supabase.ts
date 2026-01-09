@@ -26,6 +26,20 @@ export interface Link {
   created_at?: string;
 }
 
+export interface DiscordLink {
+  id?: string;
+  message_id: string;
+  channel_id: string;
+  channel_name: string;
+  author_id: string;
+  author_name: string;
+  timestamp: string;
+  message_content: string;
+  url: string;
+  domain: string;
+  created_at?: string;
+}
+
 export async function saveLink(url: string): Promise<{ data: Link | null; error: any }> {
   try {
     const supabase = getSupabaseClient();
@@ -39,6 +53,21 @@ export async function saveLink(url: string): Promise<{ data: Link | null; error:
   } catch (error) {
     // Handle errors from .single() or other operations
     console.error('[ERROR] Exception in saveLink:', error);
+    return { data: null, error };
+  }
+}
+
+export async function saveDiscordLinks(links: DiscordLink[]): Promise<{ data: DiscordLink[] | null; error: any }> {
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await supabase
+      .from('discord_links')
+      .upsert(links, { onConflict: 'message_id,url' })
+      .select();
+    
+    return { data, error };
+  } catch (error) {
+    console.error('[ERROR] Exception in saveDiscordLinks:', error);
     return { data: null, error };
   }
 }

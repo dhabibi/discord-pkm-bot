@@ -47,3 +47,15 @@ export function extractUrls(text: string): string[] {
     return cleaned;
   });
 }
+
+export function extractDomain(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (error) {
+    // If URL parsing fails, try to extract domain manually
+    // This pattern handles URLs with usernames, ports, and other edge cases
+    const match = url.match(/^https?:\/\/(?:[^@\/\n]+@)?([^:\/\n]+)(?::\d+)?/);
+    return match ? match[1] : url;
+  }
+}

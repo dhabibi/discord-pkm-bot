@@ -5,8 +5,9 @@ A Discord bot built with TypeScript and discord.js that helps you manage and sav
 ## Features
 
 - ✅ TypeScript for type safety
-- ✅ Slash command support (`/ping`, `/save`, `/toggle-autosave`, `/check-autosave`)
+- ✅ Slash command support (`/ping`, `/save`, `/toggle-autosave`, `/check-autosave`, `/ingest-all`)
 - ✅ Channel-specific autosave for links
+- ✅ Channel history ingestion with `/ingest-all` command
 - ✅ Supabase integration for link storage
 - ✅ Comprehensive logging (startup, commands, errors)
 - ✅ Environment-based configuration
@@ -44,7 +45,33 @@ A Discord bot built with TypeScript and discord.js that helps you manage and sav
      created_at TIMESTAMPTZ DEFAULT NOW()
    );
    ```
-3. Go to Settings → API and copy:
+3. For the `/ingest-all` command, also create the `discord_links` table:
+   ```sql
+   CREATE TABLE discord_links (
+     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+     message_id TEXT NOT NULL,
+     channel_id TEXT NOT NULL,
+     channel_name TEXT NOT NULL,
+     author_id TEXT NOT NULL,
+     author_name TEXT NOT NULL,
+     timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+     message_content TEXT,
+     url TEXT NOT NULL,
+     domain TEXT NOT NULL,
+     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+   );
+   
+   -- Create indexes for common query patterns
+   CREATE INDEX idx_discord_links_channel_id ON discord_links(channel_id);
+   CREATE INDEX idx_discord_links_author_id ON discord_links(author_id);
+   CREATE INDEX idx_discord_links_domain ON discord_links(domain);
+   CREATE INDEX idx_discord_links_timestamp ON discord_links(timestamp DESC);
+   CREATE INDEX idx_discord_links_url ON discord_links(url);
+   ```
+   
+   Alternatively, you can run the provided `supabase-migration.sql` file in the SQL Editor.
+
+4. Go to Settings → API and copy:
    - Project URL (your Supabase URL)
    - Service role key (your Supabase secret key)
 
@@ -100,6 +127,19 @@ Once the bot is running and invited to your server, you can use the following co
 
 **Note:** Autosave works on a per-channel basis. Each channel can have its own autosave setting.
 
+#### Channel History Ingestion
+1. Use `/ingest-all` in any text channel to scan all historical messages
+2. The bot will:
+   - Read through all past messages in the channel
+   - Extract all URLs from non-bot messages
+   - Save them to the `discord_links` table with rich metadata (message ID, author, timestamp, domain, etc.)
+   - Show progress updates as it processes (e.g., "Processing... 500 messages scanned, 127 links found...")
+   - Handle rate limits automatically
+3. This is useful for building a comprehensive link database from existing channel history
+4. The process may take several minutes for channels with thousands of messages
+
+**Note:** The `/ingest-all` command processes messages in batches of 100 and saves links in batches of 50 to handle Discord and Supabase rate limits efficiently.
+
 ## Commands
 
 | Command | Description |
@@ -108,6 +148,7 @@ Once the bot is running and invited to your server, you can use the following co
 | `/save <url>` | Save a URL to the database |
 | `/toggle-autosave` | Toggle automatic link saving for the current channel |
 | `/check-autosave` | Check if autosave is enabled for the current channel |
+| `/ingest-all` | Extract all links from channel history and save to database |
 
 ## Logging
 
