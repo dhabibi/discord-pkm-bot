@@ -1,6 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { saveLink } from './supabase';
 import { toggleAutosave, isAutosaveEnabled } from './autosave';
+import { isAuthorized, logUnauthorizedAccess, getUnauthorizedMessage } from './authorization';
 
 // Define slash commands
 export const commands = [
@@ -70,8 +71,21 @@ export async function handleCheckAutosaveCommand(interaction: ChatInputCommandIn
 
 export async function handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const { commandName } = interaction;
+  const userId = interaction.user.id;
+  const userTag = interaction.user.tag;
   
-  console.log(`[INFO] Command received: /${commandName} by ${interaction.user.tag}`);
+  console.log(`[INFO] Command received: /${commandName} by ${userTag}`);
+
+  // Authorization check
+  if (!isAuthorized(userId)) {
+    logUnauthorizedAccess(userId, userTag, commandName);
+    try {
+      await interaction.reply({ content: getUnauthorizedMessage(), ephemeral: true });
+    } catch (error) {
+      console.error(`[ERROR] Failed to send unauthorized message to user:`, error);
+    }
+    return;
+  }
 
   try {
     if (commandName === 'ping') {

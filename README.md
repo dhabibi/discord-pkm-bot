@@ -8,6 +8,8 @@ A Discord bot built with TypeScript and discord.js that helps you manage and sav
 - ✅ Slash command support (`/ping`, `/save`, `/toggle-autosave`, `/check-autosave`)
 - ✅ Channel-specific autosave for links
 - ✅ Supabase integration for link storage
+- ✅ **Command authorization with user ID-based access control**
+- ✅ **Security logging for unauthorized access attempts**
 - ✅ Comprehensive logging (startup, commands, errors)
 - ✅ Environment-based configuration
 - ✅ Test-driven development with Jest
@@ -62,8 +64,21 @@ A Discord bot built with TypeScript and discord.js that helps you manage and sav
 4. Edit `.env` and add your credentials:
    - `DISCORD_TOKEN`: Your bot token from step 1.4
    - `DISCORD_CLIENT_ID`: Your application ID (found on the "General Information" tab)
+   - `AUTHORIZED_USER_ID`: Your Discord user ID (see "Getting Your User ID" below)
    - `SUPABASE_URL`: Your Supabase project URL
    - `SUPABASE_SECRET_KEY`: Your Supabase service role key
+
+#### Getting Your User ID
+
+To authorize yourself to use the bot, you need your Discord user ID:
+
+1. Open Discord and go to **User Settings** (gear icon)
+2. Go to **Advanced** and enable **Developer Mode**
+3. Close settings, right-click on your username anywhere in Discord
+4. Select **Copy User ID**
+5. Paste this ID as the value for `AUTHORIZED_USER_ID` in your `.env` file
+
+**Important:** Only the user with the ID specified in `AUTHORIZED_USER_ID` can execute bot commands. This is a critical security feature to prevent unauthorized access to your data.
 
 ### 4. Build and Run
 
@@ -108,6 +123,29 @@ Once the bot is running and invited to your server, you can use the following co
 | `/save <url>` | Save a URL to the database |
 | `/toggle-autosave` | Toggle automatic link saving for the current channel |
 | `/check-autosave` | Check if autosave is enabled for the current channel |
+
+## Security
+
+### Command Authorization
+
+All bot commands are protected by user ID-based authorization. Only the user specified in the `AUTHORIZED_USER_ID` environment variable can execute commands.
+
+**Features:**
+- 🔒 User ID verification for all commands
+- 🚨 Security logging for unauthorized access attempts
+- 💬 Friendly error messages for unauthorized users (sent as ephemeral messages, visible only to the user)
+- 🛡️ Fail-secure design: if `AUTHORIZED_USER_ID` is not configured, all commands are blocked
+
+**Security Considerations:**
+- Discord user IDs are permanent and cannot be changed or spoofed
+- Usernames and discriminators can be changed, so they are not used for authorization
+- Unauthorized access attempts are logged with user IDs for security monitoring
+- The authorization check happens before any command logic is executed
+
+**Log Example:**
+```
+[SECURITY] Unauthorized access attempt: User BadActor#1234 (ID: 987654321) tried to execute /save
+```
 
 ## Logging
 
