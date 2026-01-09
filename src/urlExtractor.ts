@@ -47,3 +47,14 @@ export function extractUrls(text: string): string[] {
     return cleaned;
   });
 }
+
+export function extractDomain(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname;
+  } catch (error) {
+    // If URL parsing fails, try to extract domain manually
+    const match = url.match(/^https?:\/\/([^\/]+)/);
+    return match ? match[1] : url;
+  }
+}

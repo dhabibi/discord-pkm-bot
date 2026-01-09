@@ -1,4 +1,4 @@
-import { extractUrls } from './urlExtractor';
+import { extractUrls, extractDomain } from './urlExtractor';
 
 describe('URL Extractor', () => {
   describe('extractUrls', () => {
@@ -94,6 +94,43 @@ describe('URL Extractor', () => {
       const urls = extractUrls(text);
       
       expect(urls).toEqual(['https://example.com/path/(nested_(content))']);
+    });
+  });
+
+  describe('extractDomain', () => {
+    it('should extract domain from https URL', () => {
+      const domain = extractDomain('https://example.com/path/to/page');
+      expect(domain).toBe('example.com');
+    });
+
+    it('should extract domain from http URL', () => {
+      const domain = extractDomain('http://example.com/path');
+      expect(domain).toBe('example.com');
+    });
+
+    it('should extract domain with subdomain', () => {
+      const domain = extractDomain('https://www.example.com');
+      expect(domain).toBe('www.example.com');
+    });
+
+    it('should extract domain with port number', () => {
+      const domain = extractDomain('https://example.com:8080/path');
+      expect(domain).toBe('example.com');
+    });
+
+    it('should extract domain from URL with query parameters', () => {
+      const domain = extractDomain('https://example.com/page?param=value');
+      expect(domain).toBe('example.com');
+    });
+
+    it('should handle malformed URLs gracefully', () => {
+      const domain = extractDomain('not-a-valid-url');
+      expect(domain).toBe('not-a-valid-url');
+    });
+
+    it('should handle URL without protocol', () => {
+      const domain = extractDomain('example.com/path');
+      expect(domain).toBe('example.com/path');
     });
   });
 });

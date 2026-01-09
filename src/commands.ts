@@ -1,6 +1,7 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
-import { saveLink } from './supabase';
+import { ChatInputCommandInteraction, SlashCommandBuilder, TextChannel, NewsChannel, ThreadChannel, Collection, Message } from 'discord.js';
+import { saveLink, saveDiscordLinks, DiscordLink } from './supabase';
 import { toggleAutosave, isAutosaveEnabled } from './autosave';
+import { extractUrls, extractDomain } from './urlExtractor';
 
 // Define slash commands
 export const commands = [
@@ -23,6 +24,10 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('check-autosave')
     .setDescription('Check if autosave is enabled for this channel')
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName('ingest-all')
+    .setDescription('Extract all links from channel history and save to database')
     .toJSON()
 ];
 
@@ -68,6 +73,125 @@ export async function handleCheckAutosaveCommand(interaction: ChatInputCommandIn
   }
 }
 
+export async function handleIngestAllCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  const channel = interaction.channel;
+  
+  if (!channel || !channel.isTextBased() || !('messages' in channel)) {
+    await interaction.reply('❌ This command can only be used in text channels.');
+    return;
+  }
+
+  // Type assertion for channels that support messages
+  const textChannel = channel as TextChannel | NewsChannel | ThreadChannel;
+
+  // Defer reply since this operation will take time
+  await interaction.deferReply();
+
+  try {
+    const channelName = ('name' in textChannel && textChannel.name) ? textChannel.name : 'Unknown Channel';
+    let totalMessages = 0;
+    let totalLinks = 0;
+    const allLinks: DiscordLink[] = [];
+    const BATCH_SIZE = 100;
+    const SAVE_BATCH_SIZE = 50;
+    let lastMessageId: string | undefined = undefined;
+
+    console.log(`[INFO] Starting ingest-all for channel ${textChannel.id} (${channelName})`);
+
+    // Fetch messages in batches
+    while (true) {
+      let messages: Collection<string, Message>;
+      
+      if (lastMessageId) {
+        messages = await textChannel.messages.fetch({ limit: BATCH_SIZE, before: lastMessageId });
+      } else {
+        messages = await textChannel.messages.fetch({ limit: BATCH_SIZE });
+      }
+      
+      if (messages.size === 0) {
+        break;
+      }
+
+      totalMessages += messages.size;
+      
+      // Process each message
+      for (const [, message] of messages) {
+        // Skip bot messages
+        if (message.author.bot) {
+          continue;
+        }
+
+        const urls = extractUrls(message.content);
+        
+        for (const url of urls) {
+          const domain = extractDomain(url);
+          const discordLink: DiscordLink = {
+            message_id: message.id,
+            channel_id: message.channelId,
+            channel_name: channelName,
+            author_id: message.author.id,
+            author_name: message.author.tag,
+            timestamp: message.createdAt.toISOString(),
+            message_content: message.content.substring(0, 500), // Limit content length
+            url: url,
+            domain: domain
+          };
+          
+          allLinks.push(discordLink);
+          totalLinks++;
+        }
+      }
+
+      // Update progress every batch
+      await interaction.editReply(
+        `⏳ Processing... ${totalMessages} messages scanned, ${totalLinks} links found...`
+      );
+
+      // Get the last message ID for pagination
+      lastMessageId = messages.last()?.id;
+
+      // Add a small delay to respect rate limits
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Save all links in batches
+    if (allLinks.length > 0) {
+      console.log(`[INFO] Saving ${allLinks.length} links in batches...`);
+      
+      for (let i = 0; i < allLinks.length; i += SAVE_BATCH_SIZE) {
+        const batch = allLinks.slice(i, i + SAVE_BATCH_SIZE);
+        const { error } = await saveDiscordLinks(batch);
+        
+        if (error) {
+          console.error(`[ERROR] Failed to save batch ${i}-${i + batch.length}:`, error);
+          await interaction.editReply(
+            `⚠️ Completed with errors. Processed ${totalMessages} messages, found ${totalLinks} links. Some links may not have been saved.`
+          );
+          return;
+        }
+        
+        // Update progress during save
+        await interaction.editReply(
+          `💾 Saving links... ${Math.min(i + SAVE_BATCH_SIZE, allLinks.length)}/${allLinks.length} saved...`
+        );
+      }
+
+      console.log(`[INFO] Successfully saved ${allLinks.length} links`);
+      await interaction.editReply(
+        `✅ Completed! Processed ${totalMessages} messages and saved ${totalLinks} links from channel history.`
+      );
+    } else {
+      await interaction.editReply(
+        `✅ Completed! Processed ${totalMessages} messages but found no links.`
+      );
+    }
+
+  } catch (error) {
+    console.error('[ERROR] Failed to ingest channel history:', error);
+    await interaction.editReply('❌ An error occurred while processing channel history. Please try again.');
+  }
+}
+
 export async function handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const { commandName } = interaction;
   
@@ -82,6 +206,8 @@ export async function handleCommand(interaction: ChatInputCommandInteraction): P
       await handleToggleAutosaveCommand(interaction);
     } else if (commandName === 'check-autosave') {
       await handleCheckAutosaveCommand(interaction);
+    } else if (commandName === 'ingest-all') {
+      await handleIngestAllCommand(interaction);
     } else {
       await interaction.reply('❌ Unknown command.');
       console.log(`[WARN] Unknown command received: /${commandName}`);

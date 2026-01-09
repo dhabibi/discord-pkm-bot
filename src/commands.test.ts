@@ -1,6 +1,6 @@
-import { handlePingCommand, handleSaveCommand, handleToggleAutosaveCommand, handleCheckAutosaveCommand, commands } from './commands';
-import { ChatInputCommandInteraction } from 'discord.js';
-import { saveLink } from './supabase';
+import { handlePingCommand, handleSaveCommand, handleToggleAutosaveCommand, handleCheckAutosaveCommand, handleIngestAllCommand, commands } from './commands';
+import { ChatInputCommandInteraction, Collection, Message, TextChannel } from 'discord.js';
+import { saveLink, saveDiscordLinks } from './supabase';
 import { toggleAutosave, isAutosaveEnabled, clearAutosaveSettings } from './autosave';
 
 // Mock dependencies
@@ -39,6 +39,13 @@ describe('Commands', () => {
       expect(checkCommand).toBeDefined();
       expect(checkCommand?.name).toBe('check-autosave');
       expect(checkCommand?.description).toBe('Check if autosave is enabled for this channel');
+    });
+
+    it('should have an ingest-all command defined', () => {
+      const ingestCommand = commands.find(cmd => cmd.name === 'ingest-all');
+      expect(ingestCommand).toBeDefined();
+      expect(ingestCommand?.name).toBe('ingest-all');
+      expect(ingestCommand?.description).toBe('Extract all links from channel history and save to database');
     });
   });
 
@@ -186,6 +193,205 @@ describe('Commands', () => {
 
       expect(isAutosaveEnabled).toHaveBeenCalledWith(channelId);
       expect(mockInteraction.reply).toHaveBeenCalledWith('⛔ Autosave is **disabled** for this channel.');
+    });
+  });
+
+  describe('handleIngestAllCommand', () => {
+    beforeEach(() => {
+      jest.clearAllMocks();
+    });
+
+    it('should process channel history and save links', async () => {
+      const mockMessage1 = {
+        id: '111',
+        channelId: '123456789',
+        author: { id: '999', tag: 'User#1234', bot: false },
+        content: 'Check out https://example.com',
+        createdAt: new Date('2024-01-01T00:00:00Z')
+      };
+
+      const mockMessage2 = {
+        id: '222',
+        channelId: '123456789',
+        author: { id: '888', tag: 'User#5678', bot: false },
+        content: 'Also see http://test.com and https://another.com',
+        createdAt: new Date('2024-01-01T01:00:00Z')
+      };
+
+      const mockMessages = new Map();
+      mockMessages.set('111', mockMessage1);
+      mockMessages.set('222', mockMessage2);
+
+      const mockCollection = {
+        size: 2,
+        [Symbol.iterator]: function* () {
+          for (const [key, value] of mockMessages) {
+            yield [key, value];
+          }
+        },
+        last: () => mockMessage2
+      };
+
+      const mockChannel = {
+        id: '123456789',
+        name: 'general',
+        isTextBased: () => true,
+        messages: {
+          fetch: jest.fn()
+            .mockResolvedValueOnce(mockCollection)
+            .mockResolvedValueOnce({ size: 0 })
+        }
+      };
+
+      (saveDiscordLinks as jest.Mock).mockResolvedValue({ data: [], error: null });
+
+      const mockInteraction = {
+        channel: mockChannel,
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'ingest-all'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleIngestAllCommand(mockInteraction);
+
+      expect(mockInteraction.deferReply).toHaveBeenCalled();
+      expect(saveDiscordLinks).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            url: 'https://example.com',
+            domain: 'example.com',
+            message_id: '111'
+          }),
+          expect.objectContaining({
+            url: 'http://test.com',
+            domain: 'test.com',
+            message_id: '222'
+          }),
+          expect.objectContaining({
+            url: 'https://another.com',
+            domain: 'another.com',
+            message_id: '222'
+          })
+        ])
+      );
+      expect(mockInteraction.editReply).toHaveBeenLastCalledWith(
+        expect.stringContaining('✅ Completed!')
+      );
+    });
+
+    it('should handle channels with no links', async () => {
+      const mockMessage = {
+        id: '111',
+        channelId: '123456789',
+        author: { id: '999', tag: 'User#1234', bot: false },
+        content: 'Just plain text without links',
+        createdAt: new Date('2024-01-01T00:00:00Z')
+      };
+
+      const mockMessages = new Map();
+      mockMessages.set('111', mockMessage);
+
+      const mockCollection = {
+        size: 1,
+        [Symbol.iterator]: function* () {
+          for (const [key, value] of mockMessages) {
+            yield [key, value];
+          }
+        },
+        last: () => mockMessage
+      };
+
+      const mockChannel = {
+        id: '123456789',
+        name: 'general',
+        isTextBased: () => true,
+        messages: {
+          fetch: jest.fn()
+            .mockResolvedValueOnce(mockCollection)
+            .mockResolvedValueOnce({ size: 0 })
+        }
+      };
+
+      const mockInteraction = {
+        channel: mockChannel,
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'ingest-all'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleIngestAllCommand(mockInteraction);
+
+      expect(mockInteraction.editReply).toHaveBeenLastCalledWith(
+        expect.stringContaining('but found no links')
+      );
+      expect(saveDiscordLinks).not.toHaveBeenCalled();
+    });
+
+    it('should skip bot messages', async () => {
+      const mockBotMessage = {
+        id: '111',
+        channelId: '123456789',
+        author: { id: '999', tag: 'Bot#1234', bot: true },
+        content: 'Bot message with https://example.com',
+        createdAt: new Date('2024-01-01T00:00:00Z')
+      };
+
+      const mockMessages = new Map();
+      mockMessages.set('111', mockBotMessage);
+
+      const mockCollection = {
+        size: 1,
+        [Symbol.iterator]: function* () {
+          for (const [key, value] of mockMessages) {
+            yield [key, value];
+          }
+        },
+        last: () => mockBotMessage
+      };
+
+      const mockChannel = {
+        id: '123456789',
+        name: 'general',
+        isTextBased: () => true,
+        messages: {
+          fetch: jest.fn()
+            .mockResolvedValueOnce(mockCollection)
+            .mockResolvedValueOnce({ size: 0 })
+        }
+      };
+
+      const mockInteraction = {
+        channel: mockChannel,
+        deferReply: jest.fn().mockResolvedValue(undefined),
+        editReply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'ingest-all'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleIngestAllCommand(mockInteraction);
+
+      expect(saveDiscordLinks).not.toHaveBeenCalled();
+    });
+
+    it('should reject non-text channels', async () => {
+      const mockChannel = {
+        isTextBased: () => false
+      };
+
+      const mockInteraction = {
+        channel: mockChannel,
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'ingest-all'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleIngestAllCommand(mockInteraction);
+
+      expect(mockInteraction.reply).toHaveBeenCalledWith(
+        '❌ This command can only be used in text channels.'
+      );
     });
   });
 });
