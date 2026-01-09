@@ -1,11 +1,13 @@
-import { handlePingCommand, handleSaveCommand, handleToggleAutosaveCommand, handleCheckAutosaveCommand, commands } from './commands';
+import { handlePingCommand, handleSaveCommand, handleToggleAutosaveCommand, handleCheckAutosaveCommand, handleCommand, commands } from './commands';
 import { ChatInputCommandInteraction } from 'discord.js';
 import { saveLink } from './supabase';
 import { toggleAutosave, isAutosaveEnabled, clearAutosaveSettings } from './autosave';
+import { isAuthorized, logUnauthorizedAccess, getUnauthorizedMessage } from './authorization';
 
 // Mock dependencies
 jest.mock('./supabase');
 jest.mock('./autosave');
+jest.mock('./authorization');
 
 describe('Commands', () => {
   beforeEach(() => {
@@ -186,6 +188,97 @@ describe('Commands', () => {
 
       expect(isAutosaveEnabled).toHaveBeenCalledWith(channelId);
       expect(mockInteraction.reply).toHaveBeenCalledWith('⛔ Autosave is **disabled** for this channel.');
+    });
+  });
+
+  describe('handleCommand with Authorization', () => {
+    beforeEach(() => {
+      (clearAutosaveSettings as jest.Mock).mockImplementation(() => {});
+    });
+
+    it('should allow authorized user to execute command', async () => {
+      const mockUserId = '123456789';
+      const mockUserTag = 'AuthorizedUser#1234';
+      (isAuthorized as jest.Mock).mockReturnValue(true);
+
+      const mockInteraction = {
+        user: { id: mockUserId, tag: mockUserTag },
+        commandName: 'ping',
+        reply: jest.fn().mockResolvedValue(undefined)
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleCommand(mockInteraction);
+
+      expect(isAuthorized).toHaveBeenCalledWith(mockUserId);
+      expect(mockInteraction.reply).toHaveBeenCalledWith('Pong! 🏓');
+      expect(logUnauthorizedAccess).not.toHaveBeenCalled();
+    });
+
+    it('should block unauthorized user from executing command', async () => {
+      const mockUserId = '987654321';
+      const mockUserTag = 'UnauthorizedUser#5678';
+      const mockMessage = '🔒 You are not authorized to use this bot. If you believe this is an error, please contact the bot administrator.';
+      
+      (isAuthorized as jest.Mock).mockReturnValue(false);
+      (logUnauthorizedAccess as jest.Mock).mockImplementation(() => {});
+      (getUnauthorizedMessage as jest.Mock).mockReturnValue(mockMessage);
+
+      const mockInteraction = {
+        user: { id: mockUserId, tag: mockUserTag },
+        commandName: 'save',
+        reply: jest.fn().mockResolvedValue(undefined)
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleCommand(mockInteraction);
+
+      expect(isAuthorized).toHaveBeenCalledWith(mockUserId);
+      expect(logUnauthorizedAccess).toHaveBeenCalledWith(mockUserId, mockUserTag, 'save');
+      expect(mockInteraction.reply).toHaveBeenCalledWith({ content: mockMessage, ephemeral: true });
+    });
+
+    it('should log unauthorized access attempts', async () => {
+      const mockUserId = '111222333';
+      const mockUserTag = 'Hacker#9999';
+      
+      (isAuthorized as jest.Mock).mockReturnValue(false);
+      (logUnauthorizedAccess as jest.Mock).mockImplementation(() => {});
+      (getUnauthorizedMessage as jest.Mock).mockReturnValue('Not authorized');
+
+      const mockInteraction = {
+        user: { id: mockUserId, tag: mockUserTag },
+        commandName: 'toggle-autosave',
+        reply: jest.fn().mockResolvedValue(undefined)
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleCommand(mockInteraction);
+
+      expect(logUnauthorizedAccess).toHaveBeenCalledWith(mockUserId, mockUserTag, 'toggle-autosave');
+    });
+
+    it('should handle reply errors gracefully when unauthorized', async () => {
+      const mockUserId = '999888777';
+      const mockUserTag = 'TestUser#0000';
+      
+      (isAuthorized as jest.Mock).mockReturnValue(false);
+      (logUnauthorizedAccess as jest.Mock).mockImplementation(() => {});
+      (getUnauthorizedMessage as jest.Mock).mockReturnValue('Not authorized');
+
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+
+      const mockInteraction = {
+        user: { id: mockUserId, tag: mockUserTag },
+        commandName: 'ping',
+        reply: jest.fn().mockRejectedValue(new Error('Reply failed'))
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleCommand(mockInteraction);
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[ERROR] Failed to send unauthorized message to user:',
+        expect.any(Error)
+      );
+
+      consoleSpy.mockRestore();
     });
   });
 });
