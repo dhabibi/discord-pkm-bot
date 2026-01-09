@@ -22,5 +22,8 @@ CREATE INDEX IF NOT EXISTS idx_discord_links_domain ON discord_links(domain);
 CREATE INDEX IF NOT EXISTS idx_discord_links_timestamp ON discord_links(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_discord_links_url ON discord_links(url);
 
+-- Create unique constraint to prevent duplicate entries
+CREATE UNIQUE INDEX IF NOT EXISTS idx_discord_links_unique_message_url ON discord_links(message_id, url);
+
 -- Add a comment to the table
 COMMENT ON TABLE discord_links IS 'Stores links extracted from Discord channel history with full context metadata';

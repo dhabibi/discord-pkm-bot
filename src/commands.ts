@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder, TextChannel, NewsChannel, ThreadChannel, Collection, Message } from 'discord.js';
+import { ChatInputCommandInteraction, SlashCommandBuilder, TextChannel, NewsChannel, ThreadChannel, Collection, Message, PermissionFlagsBits } from 'discord.js';
 import { saveLink, saveDiscordLinks, DiscordLink } from './supabase';
 import { toggleAutosave, isAutosaveEnabled } from './autosave';
 import { extractUrls, extractDomain } from './urlExtractor';
@@ -84,6 +84,16 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
   // Type assertion for channels that support messages
   const textChannel = channel as TextChannel | NewsChannel | ThreadChannel;
 
+  // Check if user has ReadMessageHistory permission
+  const member = interaction.member;
+  if (member && 'permissions' in member && member.permissions) {
+    const permissions = member.permissions;
+    if (typeof permissions !== 'string' && !permissions.has(PermissionFlagsBits.ReadMessageHistory)) {
+      await interaction.reply('❌ You need the "Read Message History" permission to use this command.');
+      return;
+    }
+  }
+
   // Defer reply since this operation will take time
   await interaction.deferReply();
 
@@ -91,7 +101,7 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
     const channelName = ('name' in textChannel && textChannel.name) ? textChannel.name : 'Unknown Channel';
     let totalMessages = 0;
     let totalLinks = 0;
-    const allLinks: DiscordLink[] = [];
+    let linksBatch: DiscordLink[] = [];
     
     // Configuration constants
     const MESSAGE_FETCH_BATCH_SIZE = 100; // Discord.js recommended batch size
@@ -102,6 +112,20 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
     let lastMessageId: string | undefined = undefined;
 
     console.log(`[INFO] Starting ingest-all for channel ${textChannel.id} (${channelName})`);
+
+    // Helper function to save a batch of links
+    const saveBatch = async (links: DiscordLink[]): Promise<boolean> => {
+      if (links.length === 0) return true;
+      
+      const { error } = await saveDiscordLinks(links);
+      
+      if (error) {
+        console.error(`[ERROR] Failed to save batch:`, error);
+        return false;
+      }
+      
+      return true;
+    };
 
     // Fetch messages in batches
     while (true) {
@@ -135,15 +159,32 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
             channel_id: message.channelId,
             channel_name: channelName,
             author_id: message.author.id,
-            author_name: message.author.tag,
+            author_name: message.author.username,
             timestamp: message.createdAt.toISOString(),
             message_content: message.content.substring(0, MAX_MESSAGE_CONTENT_LENGTH),
             url: url,
             domain: domain
           };
           
-          allLinks.push(discordLink);
+          linksBatch.push(discordLink);
           totalLinks++;
+          
+          // Save batch when it reaches the limit to avoid memory issues
+          if (linksBatch.length >= LINK_SAVE_BATCH_SIZE) {
+            const success = await saveBatch(linksBatch);
+            if (!success) {
+              await interaction.editReply(
+                `⚠️ Completed with errors. Processed ${totalMessages} messages, found ${totalLinks} links. Some links may not have been saved.`
+              );
+              return;
+            }
+            
+            await interaction.editReply(
+              `💾 Saving... ${totalMessages} messages scanned, ${totalLinks} links saved...`
+            );
+            
+            linksBatch = []; // Clear the batch
+          }
         }
       }
 
@@ -159,29 +200,22 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
       await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
     }
 
-    // Save all links in batches
-    if (allLinks.length > 0) {
-      console.log(`[INFO] Saving ${allLinks.length} links in batches...`);
+    // Save any remaining links in the batch
+    if (linksBatch.length > 0) {
+      console.log(`[INFO] Saving final batch of ${linksBatch.length} links...`);
+      const success = await saveBatch(linksBatch);
       
-      for (let i = 0; i < allLinks.length; i += LINK_SAVE_BATCH_SIZE) {
-        const batch = allLinks.slice(i, i + LINK_SAVE_BATCH_SIZE);
-        const { error } = await saveDiscordLinks(batch);
-        
-        if (error) {
-          console.error(`[ERROR] Failed to save batch ${i}-${i + batch.length}:`, error);
-          await interaction.editReply(
-            `⚠️ Completed with errors. Processed ${totalMessages} messages, found ${totalLinks} links. Some links may not have been saved.`
-          );
-          return;
-        }
-        
-        // Update progress during save
+      if (!success) {
         await interaction.editReply(
-          `💾 Saving links... ${Math.min(i + LINK_SAVE_BATCH_SIZE, allLinks.length)}/${allLinks.length} saved...`
+          `⚠️ Completed with errors. Processed ${totalMessages} messages, found ${totalLinks} links. Some links may not have been saved.`
         );
+        return;
       }
+    }
 
-      console.log(`[INFO] Successfully saved ${allLinks.length} links`);
+    console.log(`[INFO] Successfully saved ${totalLinks} links`);
+    
+    if (totalLinks > 0) {
       await interaction.editReply(
         `✅ Completed! Processed ${totalMessages} messages and saved ${totalLinks} links from channel history.`
       );

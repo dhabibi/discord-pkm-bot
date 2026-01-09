@@ -205,7 +205,7 @@ describe('Commands', () => {
       const mockMessage1 = {
         id: '111',
         channelId: '123456789',
-        author: { id: '999', tag: 'User#1234', bot: false },
+        author: { id: '999', username: 'User1234', bot: false },
         content: 'Check out https://example.com',
         createdAt: new Date('2024-01-01T00:00:00Z')
       };
@@ -213,7 +213,7 @@ describe('Commands', () => {
       const mockMessage2 = {
         id: '222',
         channelId: '123456789',
-        author: { id: '888', tag: 'User#5678', bot: false },
+        author: { id: '888', username: 'User5678', bot: false },
         content: 'Also see http://test.com and https://another.com',
         createdAt: new Date('2024-01-01T01:00:00Z')
       };
@@ -247,6 +247,11 @@ describe('Commands', () => {
 
       const mockInteraction = {
         channel: mockChannel,
+        member: {
+          permissions: {
+            has: jest.fn().mockReturnValue(true)
+          }
+        },
         deferReply: jest.fn().mockResolvedValue(undefined),
         editReply: jest.fn().mockResolvedValue(undefined),
         user: { tag: 'TestUser#1234' },
@@ -284,7 +289,7 @@ describe('Commands', () => {
       const mockMessage = {
         id: '111',
         channelId: '123456789',
-        author: { id: '999', tag: 'User#1234', bot: false },
+        author: { id: '999', username: 'User1234', bot: false },
         content: 'Just plain text without links',
         createdAt: new Date('2024-01-01T00:00:00Z')
       };
@@ -315,6 +320,11 @@ describe('Commands', () => {
 
       const mockInteraction = {
         channel: mockChannel,
+        member: {
+          permissions: {
+            has: jest.fn().mockReturnValue(true)
+          }
+        },
         deferReply: jest.fn().mockResolvedValue(undefined),
         editReply: jest.fn().mockResolvedValue(undefined),
         user: { tag: 'TestUser#1234' },
@@ -333,7 +343,7 @@ describe('Commands', () => {
       const mockBotMessage = {
         id: '111',
         channelId: '123456789',
-        author: { id: '999', tag: 'Bot#1234', bot: true },
+        author: { id: '999', username: 'Bot1234', bot: true },
         content: 'Bot message with https://example.com',
         createdAt: new Date('2024-01-01T00:00:00Z')
       };
@@ -364,6 +374,11 @@ describe('Commands', () => {
 
       const mockInteraction = {
         channel: mockChannel,
+        member: {
+          permissions: {
+            has: jest.fn().mockReturnValue(true)
+          }
+        },
         deferReply: jest.fn().mockResolvedValue(undefined),
         editReply: jest.fn().mockResolvedValue(undefined),
         user: { tag: 'TestUser#1234' },
@@ -391,6 +406,33 @@ describe('Commands', () => {
 
       expect(mockInteraction.reply).toHaveBeenCalledWith(
         '❌ This command can only be used in text channels.'
+      );
+    });
+
+    it('should check for ReadMessageHistory permission', async () => {
+      const mockChannel = {
+        id: '123456789',
+        name: 'general',
+        isTextBased: () => true,
+        messages: {}
+      };
+
+      const mockInteraction = {
+        channel: mockChannel,
+        member: {
+          permissions: {
+            has: jest.fn().mockReturnValue(false)
+          }
+        },
+        reply: jest.fn().mockResolvedValue(undefined),
+        user: { tag: 'TestUser#1234' },
+        commandName: 'ingest-all'
+      } as unknown as ChatInputCommandInteraction;
+
+      await handleIngestAllCommand(mockInteraction);
+
+      expect(mockInteraction.reply).toHaveBeenCalledWith(
+        '❌ You need the "Read Message History" permission to use this command.'
       );
     });
   });

@@ -62,7 +62,7 @@ export async function saveDiscordLinks(links: DiscordLink[]): Promise<{ data: Di
     const supabase = getSupabaseClient();
     const { data, error } = await supabase
       .from('discord_links')
-      .insert(links)
+      .upsert(links, { onConflict: 'message_id,url' })
       .select();
     
     return { data, error };

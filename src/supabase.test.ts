@@ -117,7 +117,7 @@ describe('Supabase Client', () => {
           channel_id: '456',
           channel_name: 'general',
           author_id: '789',
-          author_name: 'TestUser#1234',
+          author_name: 'TestUser1234',
           timestamp: '2024-01-01T00:00:00Z',
           message_content: 'Check out this link',
           url: 'https://example.com',
@@ -126,11 +126,11 @@ describe('Supabase Client', () => {
       ];
 
       const mockSelect = jest.fn().mockResolvedValue({ data: mockLinks, error: null });
-      const mockInsert = jest.fn().mockReturnValue({
+      const mockUpsert = jest.fn().mockReturnValue({
         select: mockSelect
       });
       const mockFrom = jest.fn().mockReturnValue({
-        insert: mockInsert
+        upsert: mockUpsert
       });
       const mockClient = { from: mockFrom };
       (createClient as jest.Mock).mockReturnValue(mockClient);
@@ -138,7 +138,7 @@ describe('Supabase Client', () => {
       const result = await saveDiscordLinks(mockLinks);
 
       expect(mockFrom).toHaveBeenCalledWith('discord_links');
-      expect(mockInsert).toHaveBeenCalledWith(mockLinks);
+      expect(mockUpsert).toHaveBeenCalledWith(mockLinks, { onConflict: 'message_id,url' });
       expect(result.data).toEqual(mockLinks);
       expect(result.error).toBeNull();
     });
@@ -153,7 +153,7 @@ describe('Supabase Client', () => {
           channel_id: '456',
           channel_name: 'general',
           author_id: '789',
-          author_name: 'TestUser#1234',
+          author_name: 'TestUser1234',
           timestamp: '2024-01-01T00:00:00Z',
           message_content: 'Check out this link',
           url: 'https://example.com',
@@ -163,11 +163,11 @@ describe('Supabase Client', () => {
 
       const mockError = { message: 'Batch insert error' };
       const mockSelect = jest.fn().mockResolvedValue({ data: null, error: mockError });
-      const mockInsert = jest.fn().mockReturnValue({
+      const mockUpsert = jest.fn().mockReturnValue({
         select: mockSelect
       });
       const mockFrom = jest.fn().mockReturnValue({
-        insert: mockInsert
+        upsert: mockUpsert
       });
       const mockClient = { from: mockFrom };
       (createClient as jest.Mock).mockReturnValue(mockClient);
