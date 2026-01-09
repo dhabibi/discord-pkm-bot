@@ -92,8 +92,13 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
     let totalMessages = 0;
     let totalLinks = 0;
     const allLinks: DiscordLink[] = [];
-    const BATCH_SIZE = 100;
-    const SAVE_BATCH_SIZE = 50;
+    
+    // Configuration constants
+    const MESSAGE_FETCH_BATCH_SIZE = 100; // Discord.js recommended batch size
+    const LINK_SAVE_BATCH_SIZE = 50; // Supabase batch insert size
+    const MAX_MESSAGE_CONTENT_LENGTH = 500; // Truncate message content to this length
+    const RATE_LIMIT_DELAY_MS = 1000; // Delay between batches to respect rate limits
+    
     let lastMessageId: string | undefined = undefined;
 
     console.log(`[INFO] Starting ingest-all for channel ${textChannel.id} (${channelName})`);
@@ -103,9 +108,9 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
       let messages: Collection<string, Message>;
       
       if (lastMessageId) {
-        messages = await textChannel.messages.fetch({ limit: BATCH_SIZE, before: lastMessageId });
+        messages = await textChannel.messages.fetch({ limit: MESSAGE_FETCH_BATCH_SIZE, before: lastMessageId });
       } else {
-        messages = await textChannel.messages.fetch({ limit: BATCH_SIZE });
+        messages = await textChannel.messages.fetch({ limit: MESSAGE_FETCH_BATCH_SIZE });
       }
       
       if (messages.size === 0) {
@@ -132,7 +137,7 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
             author_id: message.author.id,
             author_name: message.author.tag,
             timestamp: message.createdAt.toISOString(),
-            message_content: message.content.substring(0, 500), // Limit content length
+            message_content: message.content.substring(0, MAX_MESSAGE_CONTENT_LENGTH),
             url: url,
             domain: domain
           };
@@ -151,15 +156,15 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
       lastMessageId = messages.last()?.id;
 
       // Add a small delay to respect rate limits
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, RATE_LIMIT_DELAY_MS));
     }
 
     // Save all links in batches
     if (allLinks.length > 0) {
       console.log(`[INFO] Saving ${allLinks.length} links in batches...`);
       
-      for (let i = 0; i < allLinks.length; i += SAVE_BATCH_SIZE) {
-        const batch = allLinks.slice(i, i + SAVE_BATCH_SIZE);
+      for (let i = 0; i < allLinks.length; i += LINK_SAVE_BATCH_SIZE) {
+        const batch = allLinks.slice(i, i + LINK_SAVE_BATCH_SIZE);
         const { error } = await saveDiscordLinks(batch);
         
         if (error) {
@@ -172,7 +177,7 @@ export async function handleIngestAllCommand(interaction: ChatInputCommandIntera
         
         // Update progress during save
         await interaction.editReply(
-          `💾 Saving links... ${Math.min(i + SAVE_BATCH_SIZE, allLinks.length)}/${allLinks.length} saved...`
+          `💾 Saving links... ${Math.min(i + LINK_SAVE_BATCH_SIZE, allLinks.length)}/${allLinks.length} saved...`
         );
       }
 
