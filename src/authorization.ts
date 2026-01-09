@@ -1,8 +1,3 @@
-import * as dotenv from 'dotenv';
-
-// Load environment variables
-dotenv.config();
-
 /**
  * Check if a user is authorized to execute commands
  * @param userId - The Discord user ID to check
@@ -11,9 +6,8 @@ dotenv.config();
 export function isAuthorized(userId: string): boolean {
   const authorizedUserId = process.env.AUTHORIZED_USER_ID;
   
-  // If no authorized user ID is configured, deny all access for security
+  // Environment variable is validated at startup, so this should always be set
   if (!authorizedUserId) {
-    console.error('[ERROR] AUTHORIZED_USER_ID environment variable is not set. All commands are blocked for security.');
     return false;
   }
   
@@ -23,11 +17,11 @@ export function isAuthorized(userId: string): boolean {
 /**
  * Log an unauthorized access attempt
  * @param userId - The Discord user ID who attempted access
- * @param userTag - The Discord user tag (username#discriminator)
+ * @param username - The Discord username
  * @param commandName - The command that was attempted
  */
-export function logUnauthorizedAccess(userId: string, userTag: string, commandName: string): void {
-  console.warn(`[SECURITY] Unauthorized access attempt: User ${userTag} (ID: ${userId}) tried to execute /${commandName}`);
+export function logUnauthorizedAccess(userId: string, username: string, commandName: string): void {
+  console.warn(`[SECURITY] Unauthorized access attempt: User ${username} (ID: ${userId}) tried to execute /${commandName}`);
 }
 
 /**

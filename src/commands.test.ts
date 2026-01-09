@@ -198,11 +198,11 @@ describe('Commands', () => {
 
     it('should allow authorized user to execute command', async () => {
       const mockUserId = '123456789';
-      const mockUserTag = 'AuthorizedUser#1234';
+      const mockUsername = 'AuthorizedUser';
       (isAuthorized as jest.Mock).mockReturnValue(true);
 
       const mockInteraction = {
-        user: { id: mockUserId, tag: mockUserTag },
+        user: { id: mockUserId, username: mockUsername },
         commandName: 'ping',
         reply: jest.fn().mockResolvedValue(undefined)
       } as unknown as ChatInputCommandInteraction;
@@ -216,7 +216,7 @@ describe('Commands', () => {
 
     it('should block unauthorized user from executing command', async () => {
       const mockUserId = '987654321';
-      const mockUserTag = 'UnauthorizedUser#5678';
+      const mockUsername = 'UnauthorizedUser';
       const mockMessage = '🔒 You are not authorized to use this bot. If you believe this is an error, please contact the bot administrator.';
       
       (isAuthorized as jest.Mock).mockReturnValue(false);
@@ -224,7 +224,7 @@ describe('Commands', () => {
       (getUnauthorizedMessage as jest.Mock).mockReturnValue(mockMessage);
 
       const mockInteraction = {
-        user: { id: mockUserId, tag: mockUserTag },
+        user: { id: mockUserId, username: mockUsername },
         commandName: 'save',
         reply: jest.fn().mockResolvedValue(undefined)
       } as unknown as ChatInputCommandInteraction;
@@ -232,32 +232,34 @@ describe('Commands', () => {
       await handleCommand(mockInteraction);
 
       expect(isAuthorized).toHaveBeenCalledWith(mockUserId);
-      expect(logUnauthorizedAccess).toHaveBeenCalledWith(mockUserId, mockUserTag, 'save');
+      expect(logUnauthorizedAccess).toHaveBeenCalledWith(mockUserId, mockUsername, 'save');
       expect(mockInteraction.reply).toHaveBeenCalledWith({ content: mockMessage, ephemeral: true });
+      // Verify that saveLink was NOT called after authorization failed
+      expect(saveLink).not.toHaveBeenCalled();
     });
 
     it('should log unauthorized access attempts', async () => {
       const mockUserId = '111222333';
-      const mockUserTag = 'Hacker#9999';
+      const mockUsername = 'Hacker';
       
       (isAuthorized as jest.Mock).mockReturnValue(false);
       (logUnauthorizedAccess as jest.Mock).mockImplementation(() => {});
       (getUnauthorizedMessage as jest.Mock).mockReturnValue('Not authorized');
 
       const mockInteraction = {
-        user: { id: mockUserId, tag: mockUserTag },
+        user: { id: mockUserId, username: mockUsername },
         commandName: 'toggle-autosave',
         reply: jest.fn().mockResolvedValue(undefined)
       } as unknown as ChatInputCommandInteraction;
 
       await handleCommand(mockInteraction);
 
-      expect(logUnauthorizedAccess).toHaveBeenCalledWith(mockUserId, mockUserTag, 'toggle-autosave');
+      expect(logUnauthorizedAccess).toHaveBeenCalledWith(mockUserId, mockUsername, 'toggle-autosave');
     });
 
     it('should handle reply errors gracefully when unauthorized', async () => {
       const mockUserId = '999888777';
-      const mockUserTag = 'TestUser#0000';
+      const mockUsername = 'TestUser';
       
       (isAuthorized as jest.Mock).mockReturnValue(false);
       (logUnauthorizedAccess as jest.Mock).mockImplementation(() => {});
@@ -266,7 +268,7 @@ describe('Commands', () => {
       const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
 
       const mockInteraction = {
-        user: { id: mockUserId, tag: mockUserTag },
+        user: { id: mockUserId, username: mockUsername },
         commandName: 'ping',
         reply: jest.fn().mockRejectedValue(new Error('Reply failed'))
       } as unknown as ChatInputCommandInteraction;

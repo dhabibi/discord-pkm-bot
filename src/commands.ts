@@ -72,13 +72,13 @@ export async function handleCheckAutosaveCommand(interaction: ChatInputCommandIn
 export async function handleCommand(interaction: ChatInputCommandInteraction): Promise<void> {
   const { commandName } = interaction;
   const userId = interaction.user.id;
-  const userTag = interaction.user.tag;
+  const username = interaction.user.username;
   
-  console.log(`[INFO] Command received: /${commandName} by ${userTag}`);
+  console.log(`[INFO] Command received: /${commandName} by ${username}`);
 
   // Authorization check
   if (!isAuthorized(userId)) {
-    logUnauthorizedAccess(userId, userTag, commandName);
+    logUnauthorizedAccess(userId, username, commandName);
     try {
       await interaction.reply({ content: getUnauthorizedMessage(), ephemeral: true });
     } catch (error) {

@@ -9,9 +9,16 @@ dotenv.config();
 // Configuration
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+const AUTHORIZED_USER_ID = process.env.AUTHORIZED_USER_ID;
 
 if (!TOKEN || !CLIENT_ID) {
   console.error('[ERROR] Missing required environment variables: DISCORD_TOKEN and/or DISCORD_CLIENT_ID');
+  process.exit(1);
+}
+
+if (!AUTHORIZED_USER_ID) {
+  console.error('[ERROR] Missing required environment variable: AUTHORIZED_USER_ID');
+  console.error('[ERROR] Please set AUTHORIZED_USER_ID in your .env file to restrict bot access.');
   process.exit(1);
 }
 

@@ -25,14 +25,7 @@ describe('Authorization', () => {
 
     it('should return false when AUTHORIZED_USER_ID is not set', () => {
       delete process.env.AUTHORIZED_USER_ID;
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-      
       expect(isAuthorized('123456789')).toBe(false);
-      expect(consoleSpy).toHaveBeenCalledWith(
-        '[ERROR] AUTHORIZED_USER_ID environment variable is not set. All commands are blocked for security.'
-      );
-      
-      consoleSpy.mockRestore();
     });
 
     it('should return false when AUTHORIZED_USER_ID is empty string', () => {
@@ -45,10 +38,10 @@ describe('Authorization', () => {
     it('should log unauthorized access attempts with user details', () => {
       const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
       
-      logUnauthorizedAccess('987654321', 'UnauthorizedUser#1234', 'save');
+      logUnauthorizedAccess('987654321', 'UnauthorizedUser', 'save');
       
       expect(consoleSpy).toHaveBeenCalledWith(
-        '[SECURITY] Unauthorized access attempt: User UnauthorizedUser#1234 (ID: 987654321) tried to execute /save'
+        '[SECURITY] Unauthorized access attempt: User UnauthorizedUser (ID: 987654321) tried to execute /save'
       );
       
       consoleSpy.mockRestore();
@@ -57,10 +50,10 @@ describe('Authorization', () => {
     it('should handle different commands correctly', () => {
       const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
       
-      logUnauthorizedAccess('111222333', 'TestUser#5678', 'ping');
+      logUnauthorizedAccess('111222333', 'TestUser', 'ping');
       
       expect(consoleSpy).toHaveBeenCalledWith(
-        '[SECURITY] Unauthorized access attempt: User TestUser#5678 (ID: 111222333) tried to execute /ping'
+        '[SECURITY] Unauthorized access attempt: User TestUser (ID: 111222333) tried to execute /ping'
       );
       
       consoleSpy.mockRestore();
